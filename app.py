@@ -11,14 +11,17 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 GITHUB_REPO = "jimhoggey/service-visuals"
 
 from flask import Flask, jsonify, request, send_from_directory
 
+import updater
 from jobs import JobManager
 from render.encoder import EXPORTS_DIR
 from render.timer import render_timer
@@ -265,12 +268,14 @@ def api_update_check():
             tag = data.get("tag_name") or ""
             if _version_tuple(tag) > _version_tuple(APP_VERSION):
                 _update.update(available=True, latest=tag,
-                               url=data.get("html_url"))
+                               url=data.get("html_url"),
+                               assets=data.get("assets") or [])
         except Exception:
             pass
     return jsonify({"current": "v" + APP_VERSION,
                     "latest": _update["latest"],
-                    "update_available": _update["available"]})
+                    "update_available": _update["available"],
+                    "can_self_install": bool(getattr(sys, "frozen", False))})
 
 
 @app.route("/api/open-release", methods=["POST"])
@@ -281,6 +286,56 @@ def api_open_release():
         return jsonify({"error": "No newer release known."}), 404
     webbrowser.open(_update["url"])
     return jsonify({"ok": True})
+
+
+# In-place self-update (packaged app only). States: idle -> downloading ->
+# staging -> restarting | error. The process exits itself at "restarting";
+# updater's detached helper swaps the install and relaunches it.
+_install_state = {"state": "idle", "pct": 0, "error": None}
+
+
+def _do_install(url):
+    try:
+        workdir = tempfile.mkdtemp(prefix="service-visuals-update-")
+        zip_path = os.path.join(workdir, "update.zip")
+        updater.download(url, zip_path,
+                         lambda p: _install_state.update(pct=p))
+        _install_state.update(state="staging")
+        staged = updater.stage(zip_path, workdir)
+        updater.spawn_replacer(staged, updater.install_root(), workdir)
+        _install_state.update(state="restarting")
+        threading.Timer(1.5, os._exit, args=(0,)).start()
+    except Exception as exc:
+        _install_state.update(state="error",
+                              error=str(exc) or exc.__class__.__name__)
+
+
+@app.route("/api/update-install", methods=["POST"])
+def api_update_install():
+    if not getattr(sys, "frozen", False):
+        return jsonify({"error": (
+            "Self-update only works in the packaged app. "
+            "Running from source? Use git pull.")}), 400
+    if not _update["available"]:
+        return jsonify({"error": "No update available."}), 404
+    asset = updater.platform_asset(_update.get("assets"))
+    if asset is None:
+        return jsonify({"error": (
+            "The latest release has no download for this platform yet.")}), 404
+    if jobs.busy():
+        return jsonify({"error": (
+            "An export is still rendering — try again when it finishes.")}), 409
+    if _install_state["state"] == "idle" or _install_state["state"] == "error":
+        _install_state.update(state="downloading", pct=0, error=None)
+        threading.Thread(target=_do_install,
+                         args=(asset["browser_download_url"],),
+                         daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/update-status")
+def api_update_status():
+    return jsonify(_install_state)
 
 
 @app.route("/api/reveal", methods=["POST"])

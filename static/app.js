@@ -104,15 +104,60 @@
       .then(function (j) {
         if (!j || !j.update_available) return;
         $("update-text").textContent = "UPDATE " + j.latest + " AVAILABLE";
+        $("update-get").textContent = j.can_self_install ? "INSTALL" : "GET";
         $("update-pill").hidden = false;
         $("update-get").addEventListener("click", function () {
-          fetch("/api/open-release", { method: "POST" }).catch(function () {});
+          if (!j.can_self_install) {
+            // Running from source: just open the release page.
+            fetch("/api/open-release", { method: "POST" }).catch(function () {});
+            return;
+          }
+          $("update-get").disabled = true;
+          fetch("/api/update-install", { method: "POST" })
+            .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+            .then(function (res) {
+              if (!res.ok) {
+                $("update-text").textContent = ((res.body && res.body.error) || "Update failed.").toUpperCase();
+                $("update-get").disabled = false;
+                return;
+              }
+              watchInstall();
+            })
+            .catch(function () { $("update-get").disabled = false; });
         });
         $("update-dismiss").addEventListener("click", function () {
           $("update-pill").hidden = true;
         });
       })
       .catch(function () { /* offline or old server — stay quiet */ });
+  }
+
+  function watchInstall() {
+    $("update-dismiss").hidden = true;
+    var poll = setInterval(function () {
+      fetch("/api/update-status", { cache: "no-store" })
+        .then(function (r) { return r.json(); })
+        .then(function (s) {
+          if (s.state === "downloading") {
+            $("update-text").textContent = "DOWNLOADING " + (s.pct || 0) + "%";
+          } else if (s.state === "staging") {
+            $("update-text").textContent = "PREPARING…";
+          } else if (s.state === "restarting") {
+            $("update-text").textContent = "RESTARTING…";
+            clearInterval(poll);
+          } else if (s.state === "error") {
+            $("update-text").textContent = "UPDATE FAILED — " + (s.error || "").toUpperCase();
+            $("update-get").disabled = false;
+            $("update-dismiss").hidden = false;
+            clearInterval(poll);
+          }
+        })
+        .catch(function () {
+          // Server just exited for the swap — the app is relaunching itself.
+          $("update-text").textContent = "RESTARTING…";
+          clearInterval(poll);
+        });
+    }, 500);
   }
 
   // ----------------------------------------------------------------- views

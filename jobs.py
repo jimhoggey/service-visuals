@@ -64,6 +64,11 @@ class JobManager:
         self._queue.put(job)
         return job.id
 
+    def busy(self):
+        with self._lock:
+            return any(j.status in ("queued", "rendering")
+                       for j in self._jobs.values())
+
     def get(self, job_id):
         with self._lock:
             job = self._jobs.get(job_id)

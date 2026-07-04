@@ -24,6 +24,10 @@ if SmartScreen appears, click **More info** → **Run anyway**.
 Launching the app opens the Service Visuals window — configure, export, done.
 Exported MP4s are saved to **Documents → Service Visuals**.
 
+**Updates install themselves.** When a new version is released, an amber
+UPDATE pill appears in the header — click **INSTALL** and the app downloads
+the new version, swaps itself out, and restarts. No manual reinstalling.
+
 ## Using it
 
 1. Pick a tile — **Timer** or **Spinner** — and configure it. The live
