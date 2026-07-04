@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Service Visuals</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="brand">
+    <h1>SERVICE VISUALS</h1>
+    <p class="subtitle">MP4 GENERATOR FOR PROPRESENTER</p>
+  </div>
+  <div class="server-status">
+    <span class="led" id="health-dot" data-state="unknown" aria-hidden="true"></span>
+    <span class="health-text" id="health-text" role="status">CHECKING&#8230;</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- ============================== HOME ============================== -->
+  <section class="view" id="view-home" aria-labelledby="home-title">
+    <h2 class="view-title" id="home-title" tabindex="-1">Choose a visual</h2>
+    <div class="tile-grid">
+
+      <button class="tile" id="tile-timer" type="button">
+        <svg class="glyph" viewBox="0 0 64 64" aria-hidden="true">
+          <line x1="26" y1="5" x2="38" y2="5" stroke="#f2f0eb" stroke-width="5" stroke-linecap="round"/>
+          <line x1="32" y1="6" x2="32" y2="12" stroke="#f2f0eb" stroke-width="4"/>
+          <circle cx="32" cy="36" r="22" fill="none" stroke="#23262b" stroke-width="6"/>
+          <path d="M32 14 A22 22 0 0 1 54 36" fill="none" stroke="#e8b44f" stroke-width="6" stroke-linecap="round"/>
+          <line x1="32" y1="36" x2="32" y2="23" stroke="#f2f0eb" stroke-width="4" stroke-linecap="round"/>
+          <circle cx="32" cy="36" r="3.5" fill="#e8b44f"/>
+        </svg>
+        <span class="tile-name">TIMER</span>
+        <span class="tile-desc">Countdown for pre-service, transitions and games. Classic, ring or bar.</span>
+      </button>
+
+      <button class="tile" id="tile-spinner" type="button">
+        <svg class="glyph" viewBox="0 0 64 64" aria-hidden="true">
+          <path d="M32 36 L32 14 A22 22 0 0 1 51.1 25 Z" fill="#e8b44f"/>
+          <path d="M32 36 L51.1 25 A22 22 0 0 1 51.1 47 Z" fill="#5aa9e6"/>
+          <path d="M32 36 L51.1 47 A22 22 0 0 1 32 58 Z" fill="#e2725b"/>
+          <path d="M32 36 L32 58 A22 22 0 0 1 12.9 47 Z" fill="#7fb069"/>
+          <path d="M32 36 L12.9 47 A22 22 0 0 1 12.9 25 Z" fill="#9b7ede"/>
+          <path d="M32 36 L12.9 25 A22 22 0 0 1 32 14 Z" fill="#4ecdc4"/>
+          <circle cx="32" cy="36" r="5.5" fill="#0e1013" stroke="#f2f0eb" stroke-width="2"/>
+          <path d="M26 1 L38 1 L32 11 Z" fill="#f2f0eb"/>
+        </svg>
+        <span class="tile-name">SPINNER</span>
+        <span class="tile-desc">Decision wheel for picks and prizes. Random, or you choose the winner.</span>
+      </button>
+
+      <div class="tile tile-disabled" aria-hidden="true">
+        <svg class="glyph" viewBox="0 0 64 64" aria-hidden="true">
+          <rect x="8" y="8" width="48" height="48" rx="10" fill="none" stroke="#23262b" stroke-width="3" stroke-dasharray="6 6"/>
+          <path d="M32 22 v20 M22 32 h20" stroke="#4a4e55" stroke-width="4" stroke-linecap="round"/>
+        </svg>
+        <span class="tile-name">MORE VISUALS COMING</span>
+        <span class="tile-desc">The grid has room. Announcements loop, sermon bumper&#8230;</span>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============================== TIMER ============================== -->
+  <section class="view" id="view-timer" aria-labelledby="timer-title" hidden>
+    <div class="view-bar">
+      <button class="btn btn-back" id="back-timer" type="button">&#8592; BACK</button>
+      <h2 class="view-title" id="timer-title" tabindex="-1">Countdown timer</h2>
+    </div>
+
+    <div class="config-grid">
+      <form class="config-form panel" id="timer-form" novalidate>
+        <fieldset class="fields" id="timer-fields">
+
+          <fieldset class="group">
+            <legend>Style</legend>
+            <div class="style-pick">
+              <label class="style-opt">
+                <input class="vh" type="radio" name="timer-style" id="timer-style-classic" value="classic" checked>
+                <span class="style-card">
+                  <span class="mock"><span class="mock-classic">5:00</span></span>
+                  <span class="style-name">CLASSIC</span>
+                </span>
+              </label>
+              <label class="style-opt">
+                <input class="vh" type="radio" name="timer-style" id="timer-style-ring" value="ring">
+                <span class="style-card">
+                  <span class="mock"><span class="mock-ring">5:00</span></span>
+                  <span class="style-name">RING</span>
+                </span>
+              </label>
+              <label class="style-opt">
+                <input class="vh" type="radio" name="timer-style" id="timer-style-bar" value="bar">
+                <span class="style-card">
+                  <span class="mock mock-bar"><span>5:00</span><span class="mock-track"></span></span>
+                  <span class="style-name">BAR</span>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Duration</legend>
+            <div class="duration-row">
+              <div class="num-field">
+                <label for="timer-minutes">MINUTES</label>
+                <input type="number" id="timer-minutes" inputmode="numeric" min="0" max="120" step="1" value="5">
+              </div>
+              <span class="duration-colon" aria-hidden="true">:</span>
+              <div class="num-field">
+                <label for="timer-seconds">SECONDS</label>
+                <input type="number" id="timer-seconds" inputmode="numeric" min="0" max="59" step="1" value="0">
+              </div>
+            </div>
+            <div class="chip-row" id="timer-presets" role="group" aria-label="Duration presets">
+              <button class="chip" type="button" data-minutes="1">1 MIN</button>
+              <button class="chip" type="button" data-minutes="3">3 MIN</button>
+              <button class="chip" type="button" data-minutes="5">5 MIN</button>
+              <button class="chip" type="button" data-minutes="10">10 MIN</button>
+              <button class="chip" type="button" data-minutes="15">15 MIN</button>
+            </div>
+            <p class="hint" id="timer-duration-hint">5 seconds to 120 minutes</p>
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Accent colour</legend>
+            <div class="swatch-row">
+              <label class="swatch">
+                <input class="vh" type="radio" name="timer-accent" id="timer-acc-1" value="#e8b44f" checked>
+                <span class="swatch-dot" style="--c:#e8b44f"></span><span class="vh">Amber</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="timer-accent" id="timer-acc-2" value="#5aa9e6">
+                <span class="swatch-dot" style="--c:#5aa9e6"></span><span class="vh">Blue</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="timer-accent" id="timer-acc-3" value="#e2725b">
+                <span class="swatch-dot" style="--c:#e2725b"></span><span class="vh">Coral</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="timer-accent" id="timer-acc-4" value="#7fb069">
+                <span class="swatch-dot" style="--c:#7fb069"></span><span class="vh">Green</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="timer-accent" id="timer-acc-5" value="#9b7ede">
+                <span class="swatch-dot" style="--c:#9b7ede"></span><span class="vh">Violet</span>
+              </label>
+              <label class="swatch-custom">
+                <input type="color" id="timer-accent-custom" value="#e8b44f">
+                <span>CUSTOM</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Options</legend>
+            <div class="check-row">
+              <input type="checkbox" id="timer-warn" checked>
+              <label for="timer-warn">Warn colour in final 10 seconds</label>
+            </div>
+            <div class="num-field num-field-wide">
+              <label for="timer-hold">HOLD AT 0:00 (SECONDS)</label>
+              <input type="number" id="timer-hold" inputmode="numeric" min="0" max="30" step="1" value="5">
+            </div>
+          </fieldset>
+
+          <button class="btn-export" id="timer-export" type="submit">EXPORT MP4</button>
+        </fieldset>
+
+        <div class="error-panel" id="timer-error" role="alert" hidden></div>
+      </form>
+
+      <div class="preview-pane">
+        <div class="panel preview-panel">
+          <canvas id="timer-canvas" width="960" height="540" role="img" aria-label="Timer preview"></canvas>
+          <div class="preview-meta">
+            <p class="preview-caption">PREVIEW &#8212; approximate</p>
+            <p class="spec-line">1920x1080 - 30fps - H.264 MP4</p>
+            <p class="estimate" id="timer-estimate"></p>
+          </div>
+
+          <div class="progress-panel" id="timer-progress" hidden>
+            <div class="progress-head">
+              <p class="progress-status" id="timer-status" aria-live="polite">QUEUED</p>
+              <p class="progress-pct" id="timer-pct">0%</p>
+            </div>
+            <div class="progress-track" id="timer-track" role="progressbar" aria-label="Render progress"
+                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div class="progress-fill" id="timer-bar"></div>
+            </div>
+            <div class="done-panel" id="timer-done" hidden>
+              <p class="done-filename" id="timer-filename"></p>
+              <div class="btn-row">
+                <a class="btn btn-accent" id="timer-download" href="#" download>DOWNLOAD</a>
+                <button class="btn" id="timer-reveal" type="button">REVEAL IN FINDER</button>
+                <button class="btn" id="timer-again" type="button">MAKE ANOTHER</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== SPINNER ============================== -->
+  <section class="view" id="view-spinner" aria-labelledby="spinner-title" hidden>
+    <div class="view-bar">
+      <button class="btn btn-back" id="back-spinner" type="button">&#8592; BACK</button>
+      <h2 class="view-title" id="spinner-title" tabindex="-1">Spinner wheel</h2>
+    </div>
+
+    <div class="config-grid">
+      <form class="config-form panel" id="spinner-form" novalidate>
+        <fieldset class="fields" id="spinner-fields">
+
+          <fieldset class="group">
+            <legend>Entries</legend>
+            <div class="label-row">
+              <label for="spinner-entries">ONE ENTRY PER LINE</label>
+              <span class="badge" id="spinner-count">0 ENTRIES</span>
+            </div>
+            <textarea id="spinner-entries" rows="8" spellcheck="false"
+              placeholder="Alice&#10;Bob&#10;Carmen&#10;Dan"></textarea>
+            <p class="hint">2 to 20 entries, up to 40 characters each</p>
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Mode</legend>
+            <div class="seg-group">
+              <label class="seg">
+                <input class="vh" type="radio" name="spinner-mode" id="spinner-mode-random" value="random" checked>
+                <span>RANDOM</span>
+              </label>
+              <label class="seg">
+                <input class="vh" type="radio" name="spinner-mode" id="spinner-mode-choose" value="choose">
+                <span>CHOOSE WINNER</span>
+              </label>
+            </div>
+            <div class="winner-row" id="spinner-winner-row" hidden>
+              <label for="spinner-winner">WINNER</label>
+              <select id="spinner-winner"></select>
+              <p class="hint">The wheel will land on this entry. Looks natural on screen.</p>
+            </div>
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Accent colour</legend>
+            <div class="swatch-row">
+              <label class="swatch">
+                <input class="vh" type="radio" name="spinner-accent" id="spinner-acc-1" value="#e8b44f" checked>
+                <span class="swatch-dot" style="--c:#e8b44f"></span><span class="vh">Amber</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="spinner-accent" id="spinner-acc-2" value="#5aa9e6">
+                <span class="swatch-dot" style="--c:#5aa9e6"></span><span class="vh">Blue</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="spinner-accent" id="spinner-acc-3" value="#e2725b">
+                <span class="swatch-dot" style="--c:#e2725b"></span><span class="vh">Coral</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="spinner-accent" id="spinner-acc-4" value="#7fb069">
+                <span class="swatch-dot" style="--c:#7fb069"></span><span class="vh">Green</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="spinner-accent" id="spinner-acc-5" value="#9b7ede">
+                <span class="swatch-dot" style="--c:#9b7ede"></span><span class="vh">Violet</span>
+              </label>
+              <label class="swatch-custom">
+                <input type="color" id="spinner-accent-custom" value="#e8b44f">
+                <span>CUSTOM</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <button class="btn-export" id="spinner-export" type="submit">EXPORT MP4</button>
+        </fieldset>
+
+        <div class="error-panel" id="spinner-error" role="alert" hidden></div>
+      </form>
+
+      <div class="preview-pane">
+        <div class="panel preview-panel">
+          <canvas id="spinner-canvas" width="960" height="540" role="img" aria-label="Spinner wheel preview"></canvas>
+          <div class="preview-meta">
+            <p class="preview-caption">PREVIEW &#8212; approximate</p>
+            <p class="spec-line">1920x1080 - 30fps - H.264 MP4</p>
+            <button class="btn btn-test" id="spinner-test" type="button">TEST SPIN</button>
+          </div>
+
+          <div class="progress-panel" id="spinner-progress" hidden>
+            <div class="progress-head">
+              <p class="progress-status" id="spinner-status" aria-live="polite">QUEUED</p>
+              <p class="progress-pct" id="spinner-pct">0%</p>
+            </div>
+            <div class="progress-track" id="spinner-track" role="progressbar" aria-label="Render progress"
+                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div class="progress-fill" id="spinner-bar"></div>
+            </div>
+            <div class="done-panel" id="spinner-done" hidden>
+              <p class="done-filename" id="spinner-filename"></p>
+              <div class="btn-row">
+                <a class="btn btn-accent" id="spinner-download" href="#" download>DOWNLOAD</a>
+                <button class="btn" id="spinner-reveal" type="button">REVEAL IN FINDER</button>
+                <button class="btn" id="spinner-again" type="button">MAKE ANOTHER</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== SESSION ============================== -->
+  <section class="panel session" id="session-panel" aria-labelledby="session-title" hidden>
+    <h2 class="view-title session-title" id="session-title">This session</h2>
+    <ul id="session-list"></ul>
+  </section>
+
+</main>
+
+</body>
+</html>
