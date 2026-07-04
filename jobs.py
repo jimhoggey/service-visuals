@@ -32,6 +32,11 @@ class Job:
         }
 
 
+# Terminal (done/error) jobs kept around for status polls; older ones are
+# evicted on submit so _jobs can't grow without bound in a long-lived server.
+KEEP_FINISHED = 50
+
+
 class JobManager:
     """renderers: {"timer": fn, "spinner": fn} where
     fn(options, progress_cb) -> output filename (basename in exports/).
@@ -51,6 +56,10 @@ class JobManager:
             raise ValueError(f"unknown visual type: {job_type}")
         job = Job(job_type, options)
         with self._lock:
+            finished = [j.id for j in self._jobs.values()
+                        if j.status in ("done", "error")]
+            for stale_id in finished[:-KEEP_FINISHED]:
+                del self._jobs[stale_id]
             self._jobs[job.id] = job
         self._queue.put(job)
         return job.id
@@ -62,9 +71,12 @@ class JobManager:
                 return None
             position = 0
             if job.status == "queued":
-                queued = [j for j in self._jobs.values() if j.status == "queued"]
-                position = sorted(q.id for q in queued).index(job.id) + 1 \
-                    if job in queued else 0
+                # _jobs preserves insertion order (submit() inserts under this
+                # same lock), which matches the worker's FIFO queue order.
+                queued_ids = [j.id for j in self._jobs.values()
+                              if j.status == "queued"]
+                position = queued_ids.index(job.id) + 1 \
+                    if job.id in queued_ids else 0
             return job.to_dict(queue_position=position)
 
     def _run(self):

@@ -123,17 +123,25 @@
     };
   }
 
-  function validateTimer() {
+  function validateTimerDuration() {
     var m = intFrom($("timer-minutes"));
     var s = intFrom($("timer-seconds"));
-    var hold = intFrom($("timer-hold"));
     if (m === null || m < 0 || m > 120) return "Minutes must be a whole number from 0 to 120.";
     if (s === null || s < 0 || s > 59) return "Seconds must be a whole number from 0 to 59.";
     var total = m * 60 + s;
     if (total < 5) return "The timer must run for at least 5 seconds.";
     if (total > 7200) return "The timer can run for at most 120 minutes in total.";
+    return null;
+  }
+
+  function validateTimerHold() {
+    var hold = intFrom($("timer-hold"));
     if (hold === null || hold < 0 || hold > 30) return "Hold at 0:00 must be 0 to 30 seconds.";
     return null;
+  }
+
+  function validateTimer() {
+    return validateTimerDuration() || validateTimerHold();
   }
 
   // Same display rule as the renderer: unpadded minutes, H:MM:SS above 1 hour.
@@ -235,11 +243,17 @@
   }
 
   function updateTimer() {
-    var err = validateTimer();
+    var durationErr = validateTimerDuration();
+    var holdErr = validateTimerHold();
+    var err = durationErr || holdErr;
     $("timer-export").disabled = !!err;
     var hint = $("timer-duration-hint");
-    hint.textContent = err || "5 seconds to 120 minutes";
-    hint.classList.toggle("is-bad", !!err);
+    hint.textContent = durationErr || "5 seconds to 120 minutes";
+    hint.classList.toggle("is-bad", !!durationErr);
+    var holdHint = $("timer-hold-hint");
+    holdHint.textContent = holdErr || "0 to 30 seconds";
+    holdHint.classList.toggle("is-bad", !!holdErr);
+    $("timer-hold").setAttribute("aria-invalid", holdErr ? "true" : "false");
     $("timer-estimate").textContent = err ? "EST. RENDER — (rough)" : timerEstimateText(readTimer());
     drawTimerPreview();
   }
@@ -591,6 +605,7 @@
   // =========================================================== EXPORT ======
 
   var pollHandles = {};
+  var pollGen = {};   // bumped per pollJob() so stale responses are ignored
   var updaters = { timer: updateTimer, spinner: updateSpinner };
 
   function setFormDisabled(kind, disabled) {
@@ -650,7 +665,15 @@
 
   function pollJob(kind, jobId) {
     if (pollHandles[kind]) clearInterval(pollHandles[kind]);
+    pollGen[kind] = (pollGen[kind] || 0) + 1;
+    var gen = pollGen[kind];
     var misses = 0;
+    // Responses can arrive out of order when the server is slow (the render
+    // starves Flask's threads); once the poll has terminated or been
+    // superseded, a straggler must not overwrite the final DONE/ERROR state.
+    var stale = function () {
+      return gen !== pollGen[kind] || !pollHandles[kind];
+    };
     pollHandles[kind] = setInterval(function () {
       fetch("/api/jobs/" + encodeURIComponent(jobId), { cache: "no-store" })
         .then(function (r) {
@@ -658,6 +681,7 @@
           return r.json();
         })
         .then(function (job) {
+          if (stale()) return;
           misses = 0;
           if (job.status === "queued") {
             setStatus(kind, "QUEUED" + (job.queue_position ? " #" + job.queue_position : ""));
@@ -678,6 +702,7 @@
           }
         })
         .catch(function () {
+          if (stale()) return;
           misses += 1;
           if (misses >= 6) {
             clearInterval(pollHandles[kind]);
@@ -815,7 +840,7 @@
   });
   $("spinner-winner").addEventListener("change", function () {
     cancelTestSpin();
-    drawSpinnerPreview();
+    updateSpinner();   // recomputes button state; ends with drawSpinnerPreview()
   });
   wireAccent("spinner", updateSpinner);
   $("spinner-test").addEventListener("click", testSpin);

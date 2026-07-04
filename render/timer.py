@@ -115,10 +115,11 @@ def _background():
 def _ring_mask(frac):
     """Anti-aliased L mask (tile-sized) of the remaining arc.
 
-    Arc is anchored at 12 o'clock and sweeps clockwise by 360*frac degrees
-    (PIL angles start at 3 o'clock and increase clockwise in screen coords,
-    so 12 o'clock is 270).  frac=1.0 yields the full circle (used for the
-    track too).
+    The arc END is pinned at 12 o'clock and the start edge advances
+    clockwise as frac shrinks, so the exposed track gap grows clockwise
+    from 12 — i.e. the ring depletes clockwise (PIL angles start at
+    3 o'clock and increase clockwise in screen coords, so 12 o'clock is
+    270).  frac=1.0 yields the full circle (used for the track too).
     """
     s = _RING_SS
     size = _RING_TILE * s
@@ -133,7 +134,7 @@ def _ring_mask(frac):
         if extent >= 359.95:
             d.arc(bbox, 0, 360, fill=255, width=RING_THICKNESS * s)
         else:
-            d.arc(bbox, 270.0, 270.0 + extent, fill=255,
+            d.arc(bbox, 270.0 + (360.0 - extent), 630.0, fill=255,
                   width=RING_THICKNESS * s)
     return m.reduce(s)
 
@@ -192,7 +193,12 @@ def _text_width(text, met):
 
 
 def _render_digits(text, color, met):
-    """RGBA block of the time string, one character per fixed-width slot."""
+    """RGBA block of the time string, one character per fixed-width slot.
+
+    A leading space occupies (but leaves empty) a full digit slot, so a
+    space-padded shorter time keeps the exact same block width and slot
+    positions as the initial one.
+    """
     w = int(math.ceil(_text_width(text, met))) + 2 * _DIGITS_PAD
     h = int(math.ceil(met["glyph_h"])) + 2 * _DIGITS_PAD
     block = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -203,8 +209,9 @@ def _render_digits(text, color, met):
         cw = met["colon"] if ch == ":" else met["slot"]
         # 'ms' anchor: horizontally centered in the slot, on the shared
         # baseline -> zero jitter in either axis.
-        d.text((x + cw / 2.0, baseline), ch, font=met["font"],
-               fill=color + (255,), anchor="ms")
+        if ch != " ":
+            d.text((x + cw / 2.0, baseline), ch, font=met["font"],
+                   fill=color + (255,), anchor="ms")
         x += cw
     return block
 
@@ -246,7 +253,8 @@ def render_timer(options, progress_cb):
 
     options: minutes, seconds (total 5..7200 s), style classic|ring|bar,
              accent '#rrggbb', warn_last10 bool, hold_seconds 0..30.
-    Counts down from the total to 0:00, then holds at 0:00 for hold_seconds.
+    Counts down from the total to 0:00, then holds at 0:00 for hold_seconds
+    (at least one full second of 0:00 is always shown, even with hold 0).
     """
     options = options or {}
     if progress_cb is None:
@@ -263,7 +271,9 @@ def render_timer(options, progress_cb):
     hold = max(0, min(30, _to_int(options.get("hold_seconds"), 5)))
 
     fps = _input_fps(style, total)
-    total_frames = (total + hold) * fps
+    # max(1, hold): with hold=0 the loop would stop at rem=1 and 0:00 would
+    # never appear; always render at least one second of the finished state.
+    total_frames = (total + max(1, hold)) * fps
 
     # Static layers: vignette + this style's track, built once.
     bg = _background().copy()
@@ -297,7 +307,9 @@ def render_timer(options, progress_cb):
             t = i / float(fps)
             elapsed = int(t)
             rem = total - elapsed if elapsed < total else 0
-            text = _format_remaining(rem, total)
+            # Space-pad to the initial width (e.g. "10:00" -> " 9:59") so the
+            # block width never changes and no glyph shifts sideways mid-video.
+            text = _format_remaining(rem, total).rjust(len(initial_text))
             color = accent if (warn_last10 and rem <= 10) else DIGITS_COLOR
             key = (text, color)
             if key != cached_key:

@@ -57,6 +57,10 @@ class FrameEncoder:
 
     def __init__(self, out_path, input_fps, width=WIDTH, height=HEIGHT):
         self.out_path = out_path
+        # Encode to a temporary *.part name and os.replace() it into place
+        # only on success, so a killed process (Ctrl+C mid-render) can never
+        # leave a playable-but-truncated MP4 under the final filename.
+        self._tmp_path = out_path + ".part"
         self.width = width
         self.height = height
         self.frames_written = 0
@@ -78,7 +82,8 @@ class FrameEncoder:
             "-preset", "veryfast",
             "-crf", "19",
             "-movflags", "+faststart",
-            out_path,
+            "-f", "mp4",          # .part suffix hides the extension
+            self._tmp_path,
         ]
         self._proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
@@ -106,19 +111,25 @@ class FrameEncoder:
         self._stderr.close()
         if code != 0:
             # Don't leave a truncated MP4 lying around for the user to import.
-            if os.path.exists(self.out_path):
-                os.unlink(self.out_path)
+            if os.path.exists(self._tmp_path):
+                os.unlink(self._tmp_path)
             raise EncoderError(f"ffmpeg failed (exit {code}): {tail}")
+        os.replace(self._tmp_path, self.out_path)
 
     def abort(self):
         """Kill ffmpeg and delete partial output (used on renderer errors)."""
         try:
+            try:
+                if self._proc.stdin and not self._proc.stdin.closed:
+                    self._proc.stdin.close()
+            except OSError:
+                pass  # flushing into a dying ffmpeg can raise BrokenPipeError
             self._proc.kill()
             self._proc.wait()
         finally:
             self._stderr.close()
-            if os.path.exists(self.out_path):
-                os.unlink(self.out_path)
+            if os.path.exists(self._tmp_path):
+                os.unlink(self._tmp_path)
 
     def _stderr_tail(self, limit=800):
         try:

@@ -18,23 +18,31 @@ _CANDIDATES = {
         ("/System/Library/Fonts/HelveticaNeue.ttc", 1),   # Bold
         ("/System/Library/Fonts/Avenir Next.ttc", 8),     # Heavy
         ("/System/Library/Fonts/Helvetica.ttc", 1),
+        ("C:/Windows/Fonts/arialbd.ttf", 0),
+        ("C:/Windows/Fonts/segoeuib.ttf", 0),
     ],
     # Labels, wheel entries, winner card.
     "label": [
         ("/System/Library/Fonts/Avenir Next.ttc", 2),     # Demi Bold
         ("/System/Library/Fonts/HelveticaNeue.ttc", 10),  # Medium
         ("/System/Library/Fonts/Helvetica.ttc", 0),
+        ("C:/Windows/Fonts/seguisb.ttf", 0),
+        ("C:/Windows/Fonts/arialbd.ttf", 0),
     ],
     # Small utility text (e.g. "TIME REMAINING" caption).
     "caption": [
         ("/System/Library/Fonts/Avenir Next.ttc", 5),     # Medium
         ("/System/Library/Fonts/HelveticaNeue.ttc", 0),
         ("/System/Library/Fonts/Helvetica.ttc", 0),
+        ("C:/Windows/Fonts/segoeui.ttf", 0),
+        ("C:/Windows/Fonts/arial.ttf", 0),
     ],
     # Monospace fallback / technical.
     "mono": [
         ("/System/Library/Fonts/Menlo.ttc", 1),           # Bold
         ("/System/Library/Fonts/Menlo.ttc", 0),
+        ("C:/Windows/Fonts/consolab.ttf", 0),
+        ("C:/Windows/Fonts/consola.ttf", 0),
     ],
 }
 

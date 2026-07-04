@@ -9,6 +9,7 @@ AirPlay Receiver).
 import os
 import re
 import subprocess
+import sys
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -18,6 +19,23 @@ from render.timer import render_timer
 from render.spinner import render_spinner
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
+
+# The largest legitimate payload (20 entries x 40 chars plus options) is well
+# under 2 KB; capping the body also caps json int parsing, which is quadratic
+# in digit count on Python 3.9 (a multi-MB number would pin a core for ages).
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
+
+# Localhost-only trust model: reject foreign Host headers so a DNS-rebound
+# page (attacker.com -> 127.0.0.1) cannot drive the unauthenticated API.
+ALLOWED_HOSTNAMES = ("localhost", "127.0.0.1")
+
+
+@app.before_request
+def _reject_foreign_hosts():
+    hostname = (request.host or "").rsplit(":", 1)[0]
+    if hostname not in ALLOWED_HOSTNAMES:
+        return jsonify({"error": "Host not allowed."}), 403
+
 
 jobs = JobManager({"timer": render_timer, "spinner": render_spinner})
 
@@ -236,12 +254,21 @@ def api_reveal():
         return jsonify({"error": (
             "That file no longer exists in the exports folder.")}), 404
 
-    subprocess.run(["open", "-R", path], check=False)
+    if sys.platform == "darwin":
+        subprocess.run(["open", "-R", path], check=False)
+    elif sys.platform == "win32":
+        subprocess.run(["explorer", "/select,", path], check=False)
+    else:
+        subprocess.run(["xdg-open", os.path.dirname(path)], check=False)
     return jsonify({"ok": True})
 
 
 if __name__ == "__main__":
     os.makedirs(EXPORTS_DIR, exist_ok=True)
+    # Sweep leftovers from renders that a killed server never finished.
+    for leftover in os.listdir(EXPORTS_DIR):
+        if leftover.endswith(".part"):
+            os.unlink(os.path.join(EXPORTS_DIR, leftover))
     port = int(os.environ.get("PORT", "8765"))
     banner = "\n".join([
         "",
