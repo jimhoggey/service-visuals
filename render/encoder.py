@@ -11,6 +11,7 @@ timer); ffmpeg duplicates frames up to the 30 fps output.
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -20,9 +21,25 @@ WIDTH = 1920
 HEIGHT = 1080
 OUTPUT_FPS = 30
 
-# Single source of truth for where finished MP4s land.
-EXPORTS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "exports")
+
+def _default_exports_dir():
+    """Single source of truth for where finished MP4s land.
+
+    Running from source: <repo>/exports. Packaged app (PyInstaller): a
+    visible folder in the user's Documents, since the bundle dir is not a
+    sane place for user files. Overridable via SERVICE_VISUALS_EXPORTS.
+    """
+    override = os.environ.get("SERVICE_VISUALS_EXPORTS")
+    if override:
+        return os.path.abspath(override)
+    if getattr(sys, "frozen", False):
+        return os.path.join(
+            os.path.expanduser("~"), "Documents", "Service Visuals")
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "exports")
+
+
+EXPORTS_DIR = _default_exports_dir()
 
 
 def export_path(prefix, descriptor):

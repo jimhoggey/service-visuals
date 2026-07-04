@@ -1,0 +1,66 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pywebview pyinstaller
+      - name: Build .app
+        run: >
+          pyinstaller --noconfirm --windowed --name "Service Visuals"
+          --icon assets/icon.icns
+          --add-data "static:static"
+          --collect-all imageio_ffmpeg
+          --collect-all webview
+          desktop.py
+      - name: Zip .app
+        run: cd dist && ditto -c -k --keepParent "Service Visuals.app" ServiceVisuals-mac.zip
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ServiceVisuals-mac.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ServiceVisuals-mac
+          path: dist/ServiceVisuals-mac.zip
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pywebview pyinstaller
+      - name: Build .exe
+        run: >
+          pyinstaller --noconfirm --windowed --onefile --name "Service Visuals"
+          --icon assets/icon.ico
+          --add-data "static;static"
+          --collect-all imageio_ffmpeg
+          --collect-all webview
+          desktop.py
+      - name: Zip .exe
+        run: Compress-Archive -Path "dist/Service Visuals.exe" -DestinationPath dist/ServiceVisuals-windows.zip
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ServiceVisuals-windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ServiceVisuals-windows
+          path: dist/ServiceVisuals-windows.zip

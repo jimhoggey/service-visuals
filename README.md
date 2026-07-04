@@ -1,41 +1,28 @@
 # Service Visuals
 
-A local web app for church tech teams. Quickly generate simple motion visuals —
+A desktop app for church tech teams. Quickly generate simple motion visuals —
 a **countdown timer** and a **decision spinner wheel** — and export them as
 1080p MP4 files ready to drag into **ProPresenter**.
 
-No accounts, no cloud, no ffmpeg install needed (a static ffmpeg binary is
-bundled via pip). Everything runs and renders on your machine.
+No accounts, no cloud, nothing else to install. Everything renders on your
+machine.
 
-## Install & run
+## Install (no terminal needed)
 
-You need **Python 3.9+** ([python.org/downloads](https://www.python.org/downloads/) —
-on Windows, tick "Add Python to PATH" during install).
+Grab the latest build from the
+[**Releases page**](https://github.com/jimhoggey/service-visuals/releases):
 
-**Mac**
+**Mac** — download `ServiceVisuals-mac.zip`, unzip, drag **Service Visuals**
+into your **Applications** folder, and open it from Launchpad or Spotlight.
+First open only: the app is unsigned, so right-click it → **Open** → **Open**.
 
-```bash
-git clone https://github.com/jimhoggey/service-visuals.git
-cd service-visuals
-./run.sh
-```
+**Windows** — download `ServiceVisuals-windows.zip`, unzip, and put
+**Service Visuals.exe** wherever you like (e.g. your Desktop). To get it in
+the Start menu, right-click the exe → **Pin to Start**. First open only:
+if SmartScreen appears, click **More info** → **Run anyway**.
 
-**Windows**
-
-```bat
-git clone https://github.com/jimhoggey/service-visuals.git
-cd service-visuals
-run.bat
-```
-
-(No git? Download the ZIP from GitHub — green **Code** button → Download ZIP —
-unzip it, and run `run.sh` / `run.bat` from that folder.)
-
-The first run creates a virtual environment and installs the three
-dependencies (Flask, Pillow, imageio-ffmpeg), then starts the server.
-Every run after that starts in a couple of seconds.
-
-Then open **http://localhost:8765** in your browser.
+Launching the app opens the Service Visuals window — configure, export, done.
+Exported MP4s are saved to **Documents → Service Visuals**.
 
 ## Using it
 
@@ -45,12 +32,19 @@ Then open **http://localhost:8765** in your browser.
      warn colour in the final 10 seconds, hold at 0:00.
    - **Spinner**: one entry per line (2–20), Random or Choose-winner mode,
      accent colour. Try **Test Spin** in the preview.
-2. Hit **Export**. The video renders locally into the `exports/` folder.
-3. **Download** or **Reveal in Finder**, then drag the MP4 into a
+2. Hit **Export**. The video renders locally.
+3. **Download** or **Reveal in Finder/Explorer**, then drag the MP4 into a
    ProPresenter media bin or playlist.
 
 Output spec: 1920×1080, 30 fps, H.264 MP4 (yuv420p, faststart) — plays in
 ProPresenter out of the box.
+
+## Run from source (developers)
+
+Needs Python 3.9+. Clone the repo, then `./run.sh` (Mac) or `run.bat`
+(Windows) and open http://localhost:8765. Exports land in `exports/` inside
+the repo. Desktop builds are produced by CI (`.github/workflows/build.yml`,
+PyInstaller + pywebview) on every `v*` tag.
 
 ## Roadmap
 

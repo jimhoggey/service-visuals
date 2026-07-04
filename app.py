@@ -18,7 +18,10 @@ from render.encoder import EXPORTS_DIR
 from render.timer import render_timer
 from render.spinner import render_spinner
 
-app = Flask(__name__, static_folder="static", static_url_path="/static")
+# When frozen by PyInstaller the static files live under the unpack dir.
+_BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+app = Flask(__name__, static_folder=os.path.join(_BASE_DIR, "static"),
+            static_url_path="/static")
 
 # The largest legitimate payload (20 entries x 40 chars plus options) is well
 # under 2 KB; capping the body also caps json int parsing, which is quadratic
@@ -263,12 +266,16 @@ def api_reveal():
     return jsonify({"ok": True})
 
 
-if __name__ == "__main__":
+def prepare_exports_dir():
     os.makedirs(EXPORTS_DIR, exist_ok=True)
     # Sweep leftovers from renders that a killed server never finished.
     for leftover in os.listdir(EXPORTS_DIR):
         if leftover.endswith(".part"):
             os.unlink(os.path.join(EXPORTS_DIR, leftover))
+
+
+if __name__ == "__main__":
+    prepare_exports_dir()
     port = int(os.environ.get("PORT", "8765"))
     banner = "\n".join([
         "",
