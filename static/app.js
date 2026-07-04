@@ -96,6 +96,25 @@
       .catch(function () { setHealth(false); });
   }
 
+  // --------------------------------------------------------- update checker
+
+  function checkForUpdate() {
+    fetch("/api/update-check", { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("bad status")); })
+      .then(function (j) {
+        if (!j || !j.update_available) return;
+        $("update-text").textContent = "UPDATE " + j.latest + " AVAILABLE";
+        $("update-pill").hidden = false;
+        $("update-get").addEventListener("click", function () {
+          fetch("/api/open-release", { method: "POST" }).catch(function () {});
+        });
+        $("update-dismiss").addEventListener("click", function () {
+          $("update-pill").hidden = true;
+        });
+      })
+      .catch(function () { /* offline or old server — stay quiet */ });
+  }
+
   // ----------------------------------------------------------------- views
 
   var VIEWS = ["view-home", "view-timer", "view-spinner"];
@@ -856,6 +875,7 @@
   // boot
   refreshHealth();
   setInterval(refreshHealth, 10000);
+  checkForUpdate();
   updateTimer();
   updateSpinner();
 

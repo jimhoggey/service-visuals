@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "service-visuals",
-      "runtimeExecutable": ".venv/bin/python",
+      "runtimeExecutable": "/Users/fynnj/Documents/Claude/Projects/ServiceVisualsCreations/.venv/bin/python",
       "runtimeArgs": ["app.py"],
       "port": 8765
     }

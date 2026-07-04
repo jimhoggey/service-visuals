@@ -6,10 +6,16 @@ Runs on 127.0.0.1 only; port 8765 by default (5000 collides with macOS
 AirPlay Receiver).
 """
 
+import json
 import os
 import re
 import subprocess
 import sys
+import urllib.request
+import webbrowser
+
+APP_VERSION = "1.1.0"
+GITHUB_REPO = "jimhoggey/service-visuals"
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -234,6 +240,47 @@ def api_job_status(job_id):
 @app.route("/exports/<filename>")
 def download_export(filename):
     return send_from_directory(EXPORTS_DIR, filename, as_attachment=True)
+
+
+# One GitHub query per app run; failures (offline, rate limit) stay silent —
+# an update nag must never get in the way of a Sunday morning.
+_update = {"checked": False, "available": False, "latest": None, "url": None}
+
+
+def _version_tuple(tag):
+    return tuple(int(p) for p in tag.strip().lstrip("v").split(".")[:3])
+
+
+@app.route("/api/update-check")
+def api_update_check():
+    if not _update["checked"]:
+        _update["checked"] = True
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/repos/%s/releases/latest" % GITHUB_REPO,
+                headers={"Accept": "application/vnd.github+json",
+                         "User-Agent": "service-visuals"})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                data = json.load(resp)
+            tag = data.get("tag_name") or ""
+            if _version_tuple(tag) > _version_tuple(APP_VERSION):
+                _update.update(available=True, latest=tag,
+                               url=data.get("html_url"))
+        except Exception:
+            pass
+    return jsonify({"current": "v" + APP_VERSION,
+                    "latest": _update["latest"],
+                    "update_available": _update["available"]})
+
+
+@app.route("/api/open-release", methods=["POST"])
+def api_open_release():
+    """Open the latest release page in the default browser (works from the
+    packaged pywebview window too, where target=_blank links go nowhere)."""
+    if not _update["url"]:
+        return jsonify({"error": "No newer release known."}), 404
+    webbrowser.open(_update["url"])
+    return jsonify({"ok": True})
 
 
 @app.route("/api/reveal", methods=["POST"])
