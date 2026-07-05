@@ -1,8 +1,9 @@
 # Service Visuals
 
 A desktop app for church tech teams. Quickly generate simple motion visuals —
-a **countdown timer** and a **decision spinner wheel** — and export them as
-1080p MP4 files ready to drag into **ProPresenter**.
+a **countdown timer**, a **decision spinner wheel**, a **QR "scan to…" card**
+and a **seamless motion background** — and export them as 1080p MP4 files
+ready to drag into **ProPresenter**.
 
 No accounts, no cloud, nothing else to install. Everything renders on your
 machine.
@@ -30,12 +31,18 @@ the new version, swaps itself out, and restarts. No manual reinstalling.
 
 ## Using it
 
-1. Pick a tile — **Timer** or **Spinner** — and configure it. The live
+1. Pick a tile — **Timer**, **Spinner**, **QR card** or **Motion background** —
+   and configure it. The live
    preview shows what you'll get before you spend any render time.
    - **Timer**: duration, three styles (Classic / Ring / Bar), accent colour,
      warn colour in the final 10 seconds, hold at 0:00.
    - **Spinner**: one entry per line (2–20), Random or Choose-winner mode,
      accent colour. Try **Test Spin** in the preview.
+   - **QR card**: a "scan to…" code from any URL or text, with an optional
+     heading and caption, accent colour, and clip length — perfect for giving,
+     connect cards and signups.
+   - **Motion background**: a seamlessly-looping ambient background in your
+     accent colour — Aurora, Bokeh or Waves — for worship and ambient moments.
 2. Hit **Export**. The video renders locally.
 3. **Download** or **Reveal in Finder/Explorer**, then drag the MP4 into a
    ProPresenter media bin or playlist.

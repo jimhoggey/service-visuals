@@ -27,6 +27,8 @@ import imageio_ffmpeg  # noqa: E402
 from render.encoder import EXPORTS_DIR  # noqa: E402
 from render.timer import render_timer  # noqa: E402
 from render.spinner import render_spinner  # noqa: E402
+from render.qr import render_qr  # noqa: E402
+from render.motionbg import render_motion_bg  # noqa: E402
 
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 
@@ -114,6 +116,24 @@ def main():
              "mode": "rigged", "winner": "Carol", "accent": "#e8b44f"},
             quiet_progress)
         rendered.append(("spinner", fn, 12.0))
+
+        # QR "scan to..." card — short 5 s clip.
+        fn = render_qr(
+            {"url": "https://church.example/give",
+             "heading": "SCAN TO GIVE", "caption": "Thank you",
+             "accent": "#e8b44f", "duration_seconds": 5},
+            quiet_progress)
+        rendered.append(("qr", fn, 5.0))
+
+        # Motion background — a short loop in each style. The renderer floors
+        # duration at MIN_DURATION (5 s) per the design, so a 3 s request is
+        # clamped up to 5 s; probe against the real contracted 5 s output.
+        for style in ("aurora", "bokeh", "waves"):
+            fn = render_motion_bg(
+                {"style": style, "accent": "#e8b44f",
+                 "duration_seconds": 5},
+                quiet_progress)
+            rendered.append(("motionbg/" + style, fn, 5.0))
 
         print()
         for name, filename, expected in rendered:

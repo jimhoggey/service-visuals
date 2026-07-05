@@ -61,6 +61,35 @@
         <span class="tile-desc">Decision wheel for picks and prizes. Random, or you choose the winner.</span>
       </button>
 
+      <button class="tile" id="tile-qr" type="button">
+        <svg class="glyph" viewBox="0 0 64 64" aria-hidden="true">
+          <rect x="6" y="6" width="52" height="52" rx="8" fill="none" stroke="#23262b" stroke-width="3"/>
+          <rect x="12" y="12" width="14" height="14" rx="2" fill="none" stroke="#f2f0eb" stroke-width="4"/>
+          <rect x="17" y="17" width="4" height="4" fill="#e8b44f"/>
+          <rect x="38" y="12" width="14" height="14" rx="2" fill="none" stroke="#f2f0eb" stroke-width="4"/>
+          <rect x="43" y="17" width="4" height="4" fill="#e8b44f"/>
+          <rect x="12" y="38" width="14" height="14" rx="2" fill="none" stroke="#f2f0eb" stroke-width="4"/>
+          <rect x="17" y="43" width="4" height="4" fill="#e8b44f"/>
+          <rect x="38" y="38" width="5" height="5" fill="#f2f0eb"/>
+          <rect x="47" y="38" width="5" height="5" fill="#f2f0eb"/>
+          <rect x="38" y="47" width="5" height="5" fill="#f2f0eb"/>
+          <rect x="47" y="47" width="5" height="5" fill="#f2f0eb"/>
+        </svg>
+        <span class="tile-name">QR CARD</span>
+        <span class="tile-desc">A clean &#8220;scan to give / connect&#8221; code from any URL, with a heading.</span>
+      </button>
+
+      <button class="tile" id="tile-motionbg" type="button">
+        <svg class="glyph" viewBox="0 0 64 64" aria-hidden="true">
+          <rect x="6" y="12" width="52" height="40" rx="8" fill="#0e1013" stroke="#23262b" stroke-width="3"/>
+          <circle cx="24" cy="28" r="12" fill="#e8b44f" opacity="0.55"/>
+          <circle cx="40" cy="36" r="14" fill="#5aa9e6" opacity="0.45"/>
+          <circle cx="34" cy="24" r="9" fill="#e2725b" opacity="0.5"/>
+        </svg>
+        <span class="tile-name">MOTION BG</span>
+        <span class="tile-desc">Seamlessly-looping ambient background in your accent. Aurora, bokeh, waves.</span>
+      </button>
+
       <div class="tile tile-disabled" aria-hidden="true">
         <svg class="glyph" viewBox="0 0 64 64" aria-hidden="true">
           <rect x="8" y="8" width="48" height="48" rx="10" fill="none" stroke="#23262b" stroke-width="3" stroke-dasharray="6 6"/>
@@ -316,6 +345,232 @@
                 <a class="btn btn-accent" id="spinner-download" href="#" download>DOWNLOAD</a>
                 <button class="btn" id="spinner-reveal" type="button">REVEAL IN FINDER</button>
                 <button class="btn" id="spinner-again" type="button">MAKE ANOTHER</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== QR CARD ============================== -->
+  <section class="view" id="view-qr" aria-labelledby="qr-title" hidden>
+    <div class="view-bar">
+      <button class="btn btn-back" id="back-qr" type="button">&#8592; BACK</button>
+      <h2 class="view-title" id="qr-title" tabindex="-1">QR &#8220;scan to&#8230;&#8221; card</h2>
+    </div>
+
+    <div class="config-grid">
+      <form class="config-form panel" id="qr-form" novalidate>
+        <fieldset class="fields" id="qr-fields">
+
+          <fieldset class="group">
+            <legend>Link or text</legend>
+            <div class="label-row">
+              <label for="qr-url">URL OR TEXT TO ENCODE</label>
+            </div>
+            <input type="text" id="qr-url" spellcheck="false" autocomplete="off"
+              placeholder="https://church.example/give">
+            <p class="hint" id="qr-url-hint">1 to 1000 characters</p>
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Text</legend>
+            <div class="num-field num-field-wide">
+              <label for="qr-heading">HEADING (OPTIONAL)</label>
+              <input type="text" id="qr-heading" spellcheck="false" autocomplete="off"
+                maxlength="30" placeholder="SCAN TO GIVE">
+            </div>
+            <div class="num-field num-field-wide">
+              <label for="qr-caption">CAPTION (OPTIONAL)</label>
+              <input type="text" id="qr-caption" spellcheck="false" autocomplete="off"
+                maxlength="60" placeholder="Thank you for your generosity">
+            </div>
+            <p class="hint">Heading up to 30 characters, caption up to 60</p>
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Accent colour</legend>
+            <div class="swatch-row">
+              <label class="swatch">
+                <input class="vh" type="radio" name="qr-accent" id="qr-acc-1" value="#e8b44f" checked>
+                <span class="swatch-dot" style="--c:#e8b44f"></span><span class="vh">Amber</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="qr-accent" id="qr-acc-2" value="#5aa9e6">
+                <span class="swatch-dot" style="--c:#5aa9e6"></span><span class="vh">Blue</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="qr-accent" id="qr-acc-3" value="#e2725b">
+                <span class="swatch-dot" style="--c:#e2725b"></span><span class="vh">Coral</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="qr-accent" id="qr-acc-4" value="#7fb069">
+                <span class="swatch-dot" style="--c:#7fb069"></span><span class="vh">Green</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="qr-accent" id="qr-acc-5" value="#9b7ede">
+                <span class="swatch-dot" style="--c:#9b7ede"></span><span class="vh">Violet</span>
+              </label>
+              <label class="swatch-custom">
+                <input type="color" id="qr-accent-custom" value="#e8b44f">
+                <span>CUSTOM</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Length</legend>
+            <div class="num-field num-field-wide">
+              <label for="qr-duration">CLIP LENGTH (SECONDS)</label>
+              <input type="number" id="qr-duration" inputmode="numeric" min="5" max="60" step="1" value="15">
+            </div>
+            <p class="hint" id="qr-duration-hint">5 to 60 seconds</p>
+          </fieldset>
+
+          <button class="btn-export" id="qr-export" type="submit">EXPORT MP4</button>
+        </fieldset>
+
+        <div class="error-panel" id="qr-error" role="alert" hidden></div>
+      </form>
+
+      <div class="preview-pane">
+        <div class="panel preview-panel">
+          <canvas id="qr-canvas" width="960" height="540" role="img" aria-label="QR card preview"></canvas>
+          <div class="preview-meta">
+            <p class="preview-caption">PREVIEW &#8212; approximate</p>
+            <p class="spec-line">1920x1080 - 30fps - H.264 MP4</p>
+          </div>
+
+          <div class="progress-panel" id="qr-progress" hidden>
+            <div class="progress-head">
+              <p class="progress-status" id="qr-status" aria-live="polite">QUEUED</p>
+              <p class="progress-pct" id="qr-pct">0%</p>
+            </div>
+            <div class="progress-track" id="qr-track" role="progressbar" aria-label="Render progress"
+                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div class="progress-fill" id="qr-bar"></div>
+            </div>
+            <div class="done-panel" id="qr-done" hidden>
+              <p class="done-filename" id="qr-filename"></p>
+              <div class="btn-row">
+                <a class="btn btn-accent" id="qr-download" href="#" download>DOWNLOAD</a>
+                <button class="btn" id="qr-reveal" type="button">REVEAL IN FINDER</button>
+                <button class="btn" id="qr-again" type="button">MAKE ANOTHER</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== MOTION BG ============================== -->
+  <section class="view" id="view-motionbg" aria-labelledby="motionbg-title" hidden>
+    <div class="view-bar">
+      <button class="btn btn-back" id="back-motionbg" type="button">&#8592; BACK</button>
+      <h2 class="view-title" id="motionbg-title" tabindex="-1">Motion background</h2>
+    </div>
+
+    <div class="config-grid">
+      <form class="config-form panel" id="motionbg-form" novalidate>
+        <fieldset class="fields" id="motionbg-fields">
+
+          <fieldset class="group">
+            <legend>Style</legend>
+            <div class="style-pick">
+              <label class="style-opt">
+                <input class="vh" type="radio" name="motionbg-style" id="motionbg-style-aurora" value="aurora" checked>
+                <span class="style-card">
+                  <span class="mock"><span class="mock-motionbg mock-aurora"></span></span>
+                  <span class="style-name">AURORA</span>
+                </span>
+              </label>
+              <label class="style-opt">
+                <input class="vh" type="radio" name="motionbg-style" id="motionbg-style-bokeh" value="bokeh">
+                <span class="style-card">
+                  <span class="mock"><span class="mock-motionbg mock-bokeh"></span></span>
+                  <span class="style-name">BOKEH</span>
+                </span>
+              </label>
+              <label class="style-opt">
+                <input class="vh" type="radio" name="motionbg-style" id="motionbg-style-waves" value="waves">
+                <span class="style-card">
+                  <span class="mock"><span class="mock-motionbg mock-waves"></span></span>
+                  <span class="style-name">WAVES</span>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Accent colour</legend>
+            <div class="swatch-row">
+              <label class="swatch">
+                <input class="vh" type="radio" name="motionbg-accent" id="motionbg-acc-1" value="#e8b44f" checked>
+                <span class="swatch-dot" style="--c:#e8b44f"></span><span class="vh">Amber</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="motionbg-accent" id="motionbg-acc-2" value="#5aa9e6">
+                <span class="swatch-dot" style="--c:#5aa9e6"></span><span class="vh">Blue</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="motionbg-accent" id="motionbg-acc-3" value="#e2725b">
+                <span class="swatch-dot" style="--c:#e2725b"></span><span class="vh">Coral</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="motionbg-accent" id="motionbg-acc-4" value="#7fb069">
+                <span class="swatch-dot" style="--c:#7fb069"></span><span class="vh">Green</span>
+              </label>
+              <label class="swatch">
+                <input class="vh" type="radio" name="motionbg-accent" id="motionbg-acc-5" value="#9b7ede">
+                <span class="swatch-dot" style="--c:#9b7ede"></span><span class="vh">Violet</span>
+              </label>
+              <label class="swatch-custom">
+                <input type="color" id="motionbg-accent-custom" value="#e8b44f">
+                <span>CUSTOM</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Loop length</legend>
+            <div class="num-field num-field-wide">
+              <label for="motionbg-duration">LOOP LENGTH (SECONDS)</label>
+              <input type="number" id="motionbg-duration" inputmode="numeric" min="5" max="30" step="1" value="12">
+            </div>
+            <p class="hint" id="motionbg-duration-hint">5 to 30 seconds &#8212; loops seamlessly</p>
+          </fieldset>
+
+          <button class="btn-export" id="motionbg-export" type="submit">EXPORT MP4</button>
+        </fieldset>
+
+        <div class="error-panel" id="motionbg-error" role="alert" hidden></div>
+      </form>
+
+      <div class="preview-pane">
+        <div class="panel preview-panel">
+          <canvas id="motionbg-canvas" width="960" height="540" role="img" aria-label="Motion background preview"></canvas>
+          <div class="preview-meta">
+            <p class="preview-caption">PREVIEW &#8212; approximate, live loop</p>
+            <p class="spec-line">1920x1080 - 30fps - H.264 MP4</p>
+          </div>
+
+          <div class="progress-panel" id="motionbg-progress" hidden>
+            <div class="progress-head">
+              <p class="progress-status" id="motionbg-status" aria-live="polite">QUEUED</p>
+              <p class="progress-pct" id="motionbg-pct">0%</p>
+            </div>
+            <div class="progress-track" id="motionbg-track" role="progressbar" aria-label="Render progress"
+                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div class="progress-fill" id="motionbg-bar"></div>
+            </div>
+            <div class="done-panel" id="motionbg-done" hidden>
+              <p class="done-filename" id="motionbg-filename"></p>
+              <div class="btn-row">
+                <a class="btn btn-accent" id="motionbg-download" href="#" download>DOWNLOAD</a>
+                <button class="btn" id="motionbg-reveal" type="button">REVEAL IN FINDER</button>
+                <button class="btn" id="motionbg-again" type="button">MAKE ANOTHER</button>
               </div>
             </div>
           </div>

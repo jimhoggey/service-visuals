@@ -16,7 +16,7 @@ import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 GITHUB_REPO = "jimhoggey/service-visuals"
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -26,6 +26,8 @@ from jobs import JobManager
 from render.encoder import EXPORTS_DIR
 from render.timer import render_timer
 from render.spinner import render_spinner
+from render.qr import render_qr
+from render.motionbg import render_motion_bg
 
 # When frozen by PyInstaller the static files live under the unpack dir.
 _BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
@@ -49,7 +51,8 @@ def _reject_foreign_hosts():
         return jsonify({"error": "Host not allowed."}), 403
 
 
-jobs = JobManager({"timer": render_timer, "spinner": render_spinner})
+jobs = JobManager({"timer": render_timer, "spinner": render_spinner,
+                   "qr": render_qr, "motionbg": render_motion_bg})
 
 # NB: matched with .fullmatch() — "$" alone would accept a trailing newline.
 HEX_COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")
@@ -57,6 +60,7 @@ EXPORT_FILENAME_RE = re.compile(r"[A-Za-z0-9._-]+\.mp4")
 
 TIMER_STYLES = ("classic", "ring", "bar")
 SPINNER_MODES = ("random", "rigged")
+MOTIONBG_STYLES = ("aurora", "bokeh", "waves")
 DEFAULT_ACCENT = "#e8b44f"
 
 
@@ -186,9 +190,63 @@ def validate_spinner_options(options):
     return clean
 
 
+def _str_field(options, key, lo, hi, required, label):
+    """Fetch a string option, rejecting non-strings, and enforce a length
+    range on the stripped value. `lo`/`hi` are character bounds; when
+    `required` is False an empty (or absent) value returns "" without error.
+    """
+    value = options.get(key, "")
+    if not isinstance(value, str):
+        raise ValidationError(
+            "{0} must be text — got {1!r}.".format(label, value))
+    value = value.strip()
+    if not value:
+        if required:
+            raise ValidationError("{0} is required.".format(label))
+        return ""
+    if len(value) < lo or len(value) > hi:
+        raise ValidationError(
+            "{0} must be between {1} and {2} characters.".format(
+                label, lo, hi))
+    return value
+
+
+def validate_qr_options(options):
+    url = _str_field(options, "url", 1, 1000, True, "The URL or text")
+    heading = _str_field(options, "heading", 0, 30, False, "Heading")
+    caption = _str_field(options, "caption", 0, 60, False, "Caption")
+    duration = _int_field(
+        options, "duration_seconds", 5, 60, 15, "Duration (seconds)")
+
+    return {
+        "url": url,
+        "heading": heading,
+        "caption": caption,
+        "accent": _accent_field(options),
+        "duration_seconds": duration,
+    }
+
+
+def validate_motion_bg_options(options):
+    style = options.get("style", "aurora")
+    if not isinstance(style, str) or style not in MOTIONBG_STYLES:
+        raise ValidationError(
+            "Style must be one of: aurora, bokeh, or waves.")
+    duration = _int_field(
+        options, "duration_seconds", 5, 30, 12, "Duration (seconds)")
+
+    return {
+        "style": style,
+        "accent": _accent_field(options),
+        "duration_seconds": duration,
+    }
+
+
 VALIDATORS = {
     "timer": validate_timer_options,
     "spinner": validate_spinner_options,
+    "qr": validate_qr_options,
+    "motionbg": validate_motion_bg_options,
 }
 
 
@@ -217,7 +275,8 @@ def api_render():
     visual_type = data.get("type")
     if not isinstance(visual_type, str) or visual_type not in VALIDATORS:
         return jsonify({"error": (
-            'Unknown visual type — expected "timer" or "spinner".')}), 400
+            'Unknown visual type — expected "timer", "spinner", "qr", '
+            'or "motionbg".')}), 400
 
     options = data.get("options", {})
     if not isinstance(options, dict):

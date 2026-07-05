@@ -162,15 +162,19 @@
 
   // ----------------------------------------------------------------- views
 
-  var VIEWS = ["view-home", "view-timer", "view-spinner"];
+  var VIEWS = ["view-home", "view-timer", "view-spinner", "view-qr", "view-motionbg"];
 
   function showView(id) {
     VIEWS.forEach(function (v) { $(v).hidden = (v !== id); });
     window.scrollTo(0, 0);
     var title = document.querySelector("#" + id + " .view-title");
     if (title) title.focus();
+    // Motion-bg previews run a rAF loop; stop it whenever we leave that view.
+    if (id !== "view-motionbg") stopMotionPreview();
     if (id === "view-timer") updateTimer();
     if (id === "view-spinner") updateSpinner();
+    if (id === "view-qr") updateQr();
+    if (id === "view-motionbg") updateMotionBg();
   }
 
   // ============================================================ TIMER ======
@@ -666,11 +670,401 @@
     return { type: "spinner", options: options };
   }
 
+  // =============================================================== QR =======
+
+  function readQr() {
+    return {
+      url: $("qr-url").value.trim(),
+      heading: $("qr-heading").value.trim(),
+      caption: $("qr-caption").value.trim(),
+      accent: currentAccent("qr"),
+      duration: toInt($("qr-duration").value, 15)
+    };
+  }
+
+  function validateQr() {
+    var q = readQr();
+    if (q.url.length < 1) return "Enter a URL or some text to encode.";
+    if (q.url.length > 1000) return "The URL or text must be 1000 characters or fewer.";
+    if (q.heading.length > 30) return "The heading must be 30 characters or fewer.";
+    if (q.caption.length > 60) return "The caption must be 60 characters or fewer.";
+    var d = intFrom($("qr-duration"));
+    if (d === null || d < 5 || d > 60) return "Clip length must be a whole number from 5 to 60 seconds.";
+    return null;
+  }
+
+  // Deterministic stylised QR glyph: a grid of dark modules on a white card,
+  // with three finder squares (top-left/top-right/bottom-left) so it reads as
+  // a QR. This is a PLACEHOLDER — the real code is generated server-side.
+  function drawQrGlyph(ctx, x, y, size) {
+    var n = 25;                       // modules across (odd; typical small QR)
+    var m = size / n;                 // module px
+    ctx.fillStyle = "#111417";
+    // pseudo-random but deterministic fill
+    var seed = 0;
+    function rnd() {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    }
+    function inFinder(r, c) {
+      // 7x7 finder regions (with 1-module separator) at 3 corners
+      var tl = (r < 8 && c < 8);
+      var tr = (r < 8 && c >= n - 8);
+      var bl = (r >= n - 8 && c < 8);
+      return tl || tr || bl;
+    }
+    for (var r = 0; r < n; r++) {
+      for (var c = 0; c < n; c++) {
+        if (inFinder(r, c)) continue;
+        if (rnd() > 0.52) {
+          ctx.fillRect(x + c * m, y + r * m, Math.ceil(m), Math.ceil(m));
+        }
+      }
+    }
+    // Finder squares: outer 7x7 dark ring + inner 3x3 dark core.
+    function finder(fr, fc) {
+      var fx = x + fc * m, fy = y + fr * m;
+      ctx.fillStyle = "#111417";
+      ctx.fillRect(fx, fy, 7 * m, 7 * m);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(fx + m, fy + m, 5 * m, 5 * m);
+      ctx.fillStyle = "#111417";
+      ctx.fillRect(fx + 2 * m, fy + 2 * m, 3 * m, 3 * m);
+    }
+    finder(0, 0);
+    finder(0, n - 7);
+    finder(n - 7, 0);
+  }
+
+  function drawQrPreview() {
+    var canvas = $("qr-canvas");
+    var ctx = canvas.getContext("2d");
+    paintBackground(ctx);
+
+    var q = readQr();
+    var accent = q.accent;
+
+    // Layout mirrors qr.py: card 560 (280 here), heading above, caption below,
+    // whole stack vertically centred.
+    var cardSize = 280;               // render CARD_SIZE 560 at half scale
+    var cardRadius = 20;              // render 40
+    var headingGap = 20, captionGap = 18;
+
+    ctx.textAlign = "center";
+
+    var headingText = q.heading ? q.heading.toUpperCase() : "";
+    var headingH = headingText ? 36 : 0;
+    var captionH = q.caption ? 20 : 0;
+
+    var stackH = cardSize;
+    if (headingH) stackH += headingH + headingGap;
+    if (captionH) stackH += captionH + captionGap;
+
+    var top = (PH - stackH) / 2;
+    var yy = top;
+    var headingTop = null, captionTop = null, cardTop;
+    if (headingH) { headingTop = yy; yy += headingH + headingGap; }
+    cardTop = yy;
+    yy += cardSize;
+    if (captionH) captionTop = yy + captionGap;
+
+    var cardLeft = PW / 2 - cardSize / 2;
+
+    // heading (accent, tracked)
+    if (headingText) {
+      ctx.textBaseline = "middle";
+      ctx.font = "600 34px " + FONT_LABEL;
+      ctx.fillStyle = accent;
+      var track = 3;
+      var totalW = 0;
+      headingText.split("").forEach(function (ch) { totalW += ctx.measureText(ch).width + track; });
+      totalW -= track;
+      var hx = PW / 2 - totalW / 2;
+      var hy = headingTop + headingH / 2;
+      ctx.textAlign = "left";
+      headingText.split("").forEach(function (ch) {
+        ctx.fillText(ch, hx, hy);
+        hx += ctx.measureText(ch).width + track;
+      });
+      ctx.textAlign = "center";
+    }
+
+    // white rounded card
+    roundRectPath(ctx, cardLeft, cardTop, cardSize, cardSize, cardRadius);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+
+    // QR glyph centred inside the card (quiet zone ~ 8 modules margin)
+    var pad = 18;                     // render CARD_PAD 36 at half
+    drawQrGlyph(ctx, cardLeft + pad, cardTop + pad, cardSize - 2 * pad);
+
+    // soft accent ring around the card (static representation of the breathe)
+    var ringGap = 11;
+    ctx.strokeStyle = accent;
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = 3;
+    roundRectPath(ctx, cardLeft - ringGap, cardTop - ringGap,
+      cardSize + 2 * ringGap, cardSize + 2 * ringGap, cardRadius + ringGap);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // caption (off-white)
+    if (q.caption) {
+      ctx.textBaseline = "middle";
+      ctx.font = "500 19px " + FONT_LABEL;
+      ctx.fillStyle = TEXT_LIGHT;
+      ctx.fillText(q.caption, PW / 2, captionTop + captionH / 2);
+    }
+  }
+
+  function updateQr() {
+    var err = validateQr();
+    $("qr-export").disabled = !!err;
+    var hint = $("qr-url-hint");
+    // Only surface URL-specific problems on the url hint; others go generic.
+    var urlErr = null;
+    var url = $("qr-url").value.trim();
+    if (url.length < 1) urlErr = "Enter a URL or some text to encode.";
+    else if (url.length > 1000) urlErr = "Must be 1000 characters or fewer.";
+    hint.textContent = urlErr || "1 to 1000 characters";
+    hint.classList.toggle("is-bad", !!urlErr);
+    var dHint = $("qr-duration-hint");
+    var d = intFrom($("qr-duration"));
+    var dErr = (d === null || d < 5 || d > 60) ? "5 to 60 seconds only." : null;
+    dHint.textContent = dErr || "5 to 60 seconds";
+    dHint.classList.toggle("is-bad", !!dErr);
+    drawQrPreview();
+  }
+
+  function qrPayload() {
+    var q = readQr();
+    return {
+      type: "qr",
+      options: {
+        url: q.url,
+        heading: q.heading,
+        caption: q.caption,
+        accent: q.accent,
+        duration_seconds: q.duration
+      }
+    };
+  }
+
+  // ========================================================= MOTION BG ======
+
+  var motion = { raf: 0, t0: 0 };
+
+  function readMotionBg() {
+    var styleEl = document.querySelector('input[name="motionbg-style"]:checked');
+    return {
+      style: styleEl ? styleEl.value : "aurora",
+      accent: currentAccent("motionbg"),
+      duration: toInt($("motionbg-duration").value, 12)
+    };
+  }
+
+  function validateMotionBg() {
+    var m = readMotionBg();
+    if (["aurora", "bokeh", "waves"].indexOf(m.style) < 0) return "Pick a style: Aurora, Bokeh or Waves.";
+    var d = intFrom($("motionbg-duration"));
+    if (d === null || d < 5 || d > 30) return "Loop length must be a whole number from 5 to 30 seconds.";
+    return null;
+  }
+
+  // Port of _derive_scheme() in motionbg.py: accent + two nearby (analogous)
+  // hues kept in the accent's colour family, dialled down for a dark scene.
+  function hexToHls(hex) {
+    var rgb = hexToRgb(hex).map(function (v) { return v / 255; });
+    var r = rgb[0], g = rgb[1], b = rgb[2];
+    var max = Math.max(r, g, b), min = Math.min(r, g, b);
+    var l = (max + min) / 2, h, s;
+    if (max === min) { h = 0; s = 0; }
+    else {
+      var d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h /= 6;
+    }
+    return [h, l, s];
+  }
+
+  function hlsToHex(h, l, s) {
+    h = ((h % 1) + 1) % 1;
+    l = Math.max(0, Math.min(1, l));
+    s = Math.max(0, Math.min(1, s));
+    function hue(p, q, t) {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    }
+    var r, g, b;
+    if (s === 0) { r = g = b = l; }
+    else {
+      var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      var p = 2 * l - q;
+      r = hue(p, q, h + 1 / 3);
+      g = hue(p, q, h);
+      b = hue(p, q, h - 1 / 3);
+    }
+    function ch(v) { return ("0" + Math.round(v * 255).toString(16)).slice(-2); }
+    return "#" + ch(r) + ch(g) + ch(b);
+  }
+
+  function deriveScheme(accent) {
+    var hls = hexToHls(accent), h = hls[0], l = hls[1], s = hls[2];
+    s = Math.max(0.35, Math.min(0.80, s));
+    var acc = hlsToHex(h, Math.min(0.52, Math.max(0.42, l)), s);
+    var warm = hlsToHex(h - 0.035, 0.40, s * 0.92);
+    var deep = hlsToHex(h - 0.075, 0.33, s * 0.85);
+    return [acc, warm, deep];
+  }
+
+  // Live-loop preview: every moving quantity is a function of phase so the
+  // preview shows the same seamless loop the renderer produces. Lightweight.
+  function drawMotionFrame(phase) {
+    var canvas = $("motionbg-canvas");
+    var ctx = canvas.getContext("2d");
+    var m = readMotionBg();
+    var scheme = deriveScheme(m.accent);
+
+    // near-black base with a faint centre tint
+    ctx.fillStyle = "#07080a";
+    ctx.fillRect(0, 0, PW, PH);
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+
+    if (m.style === "aurora") {
+      var blobs = [
+        [scheme[0], 0.30, 0.22, 0.0, 0.5, 1.05],
+        [scheme[2], 0.26, 0.30, 1.3, 0.0, 0.95],
+        [scheme[1], 0.34, 0.18, 2.4, 1.1, 1.20],
+        [scheme[2], 0.22, 0.28, 3.5, 2.0, 0.85],
+        [scheme[0], 0.30, 0.24, 4.6, 3.3, 1.10]
+      ];
+      blobs.forEach(function (b) {
+        var x = PW / 2 + b[1] * PW * Math.cos(phase + b[3]);
+        var y = PH / 2 + b[2] * PH * Math.sin(phase + b[4]);
+        var breathe = 1 + 0.06 * Math.sin(2 * phase + b[3]);
+        var rad = 150 * b[5] * breathe;
+        var grd = ctx.createRadialGradient(x, y, 0, x, y, rad);
+        grd.addColorStop(0, b[0]);
+        grd.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(x, y, rad, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    } else if (m.style === "bokeh") {
+      var nDots = 26;
+      for (var i = 0; i < nDots; i++) {
+        var u1 = ((i * 73 + 17) % 100) / 100;
+        var u2 = ((i * 129 + 41) % 100) / 100;
+        var u3 = ((i * 191 + 7) % 100) / 100;
+        var color = scheme[i % scheme.length];
+        var size = 14 + u3 * 34;
+        var sway = (0.02 + u2 * 0.05) * PW * Math.sin(phase + u1 * 2 * Math.PI);
+        var x2 = u1 * PW + sway;
+        var frac = ((u2 - phase / (2 * Math.PI)) % 1 + 1) % 1;
+        var y2 = frac * (PH + size * 2) - size;
+        var grd2 = ctx.createRadialGradient(x2, y2, 0, x2, y2, size);
+        grd2.addColorStop(0, color);
+        grd2.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.globalAlpha = 0.4;
+        ctx.fillStyle = grd2;
+        ctx.beginPath();
+        ctx.arc(x2, y2, size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      // waves
+      ctx.globalCompositeOperation = "source-over";
+      var bands = [
+        [scheme[2], 0.86, 0.045, 0.9, 1.0, 0.018, 0.58],
+        [scheme[1], 0.70, 0.055, 0.7, -1.0, 0.022, 0.42],
+        [scheme[0], 0.55, 0.050, 1.1, 1.0, 0.016, 0.28],
+        [scheme[1], 0.42, 0.060, 0.8, -1.0, 0.020, 0.18]
+      ];
+      bands.forEach(function (bd) {
+        var baseY = bd[1] * PH + bd[5] * PH * Math.sin(phase);
+        var amp = bd[2] * PH;
+        var wl = bd[3] * PW;
+        ctx.beginPath();
+        ctx.moveTo(0, PH);
+        for (var x = 0; x <= PW; x += 8) {
+          var arg = 2 * Math.PI * x / wl + bd[4] * phase;
+          var y = baseY + amp * Math.sin(arg);
+          ctx.lineTo(x, y);
+        }
+        ctx.lineTo(PW, PH);
+        ctx.closePath();
+        ctx.globalAlpha = bd[6];
+        ctx.fillStyle = bd[0];
+        ctx.fill();
+      });
+    }
+
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  function stopMotionPreview() {
+    if (motion.raf) cancelAnimationFrame(motion.raf);
+    motion.raf = 0;
+  }
+
+  function startMotionPreview() {
+    stopMotionPreview();
+    var m = readMotionBg();
+    var periodMs = m.duration * 1000;
+    motion.t0 = performance.now();
+    var frame = function (now) {
+      var phase = 2 * Math.PI * (((now - motion.t0) % periodMs) / periodMs);
+      drawMotionFrame(phase);
+      motion.raf = requestAnimationFrame(frame);
+    };
+    motion.raf = requestAnimationFrame(frame);
+  }
+
+  function updateMotionBg() {
+    var err = validateMotionBg();
+    $("motionbg-export").disabled = !!err;
+    var dHint = $("motionbg-duration-hint");
+    var d = intFrom($("motionbg-duration"));
+    var dErr = (d === null || d < 5 || d > 30) ? "5 to 30 seconds only." : null;
+    dHint.textContent = dErr || "5 to 30 seconds — loops seamlessly";
+    dHint.classList.toggle("is-bad", !!dErr);
+    // (Re)start the live loop with the current style/accent/period.
+    if (!$("view-motionbg").hidden) startMotionPreview();
+    else drawMotionFrame(0);
+  }
+
+  function motionBgPayload() {
+    var m = readMotionBg();
+    return {
+      type: "motionbg",
+      options: {
+        style: m.style,
+        accent: m.accent,
+        duration_seconds: m.duration
+      }
+    };
+  }
+
   // =========================================================== EXPORT ======
 
   var pollHandles = {};
   var pollGen = {};   // bumped per pollJob() so stale responses are ignored
-  var updaters = { timer: updateTimer, spinner: updateSpinner };
+  var updaters = {
+    timer: updateTimer, spinner: updateSpinner,
+    qr: updateQr, motionbg: updateMotionBg
+  };
 
   function setFormDisabled(kind, disabled) {
     $(kind + "-fields").disabled = disabled;
@@ -865,8 +1259,12 @@
   // navigation
   $("tile-timer").addEventListener("click", function () { showView("view-timer"); });
   $("tile-spinner").addEventListener("click", function () { showView("view-spinner"); });
+  $("tile-qr").addEventListener("click", function () { showView("view-qr"); });
+  $("tile-motionbg").addEventListener("click", function () { showView("view-motionbg"); });
   $("back-timer").addEventListener("click", function () { showView("view-home"); });
   $("back-spinner").addEventListener("click", function () { showView("view-home"); });
+  $("back-qr").addEventListener("click", function () { showView("view-home"); });
+  $("back-motionbg").addEventListener("click", function () { showView("view-home"); });
 
   // timer form
   $("timer-form").addEventListener("input", updateTimer);
@@ -917,11 +1315,39 @@
   $("spinner-again").addEventListener("click", function () { resetExport("spinner"); });
   $("spinner-reveal").addEventListener("click", function () { revealInFinder("spinner"); });
 
+  // qr form
+  $("qr-form").addEventListener("input", updateQr);
+  $("qr-form").addEventListener("change", updateQr);
+  wireAccent("qr", updateQr);
+  $("qr-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var err = validateQr();
+    if (err) { showError("qr", err); return; }
+    startExport("qr", qrPayload());
+  });
+  $("qr-again").addEventListener("click", function () { resetExport("qr"); });
+  $("qr-reveal").addEventListener("click", function () { revealInFinder("qr"); });
+
+  // motion-bg form
+  $("motionbg-form").addEventListener("input", updateMotionBg);
+  $("motionbg-form").addEventListener("change", updateMotionBg);
+  wireAccent("motionbg", updateMotionBg);
+  $("motionbg-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var err = validateMotionBg();
+    if (err) { showError("motionbg", err); return; }
+    startExport("motionbg", motionBgPayload());
+  });
+  $("motionbg-again").addEventListener("click", function () { resetExport("motionbg"); });
+  $("motionbg-reveal").addEventListener("click", function () { revealInFinder("motionbg"); });
+
   // boot
   refreshHealth();
   setInterval(refreshHealth, 10000);
   checkForUpdate();
   updateTimer();
   updateSpinner();
+  updateQr();
+  drawMotionFrame(0);
 
 })();
