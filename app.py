@@ -16,17 +16,21 @@ import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 GITHUB_REPO = "jimhoggey/service-visuals"
 
-from flask import Flask, jsonify, request, send_from_directory
+import io
+import uuid
+
+from flask import (Flask, jsonify, request, send_file, send_from_directory)
+from PIL import Image
 
 import updater
 from jobs import JobManager
-from render.encoder import EXPORTS_DIR
+from render.encoder import EXPORTS_DIR, UPLOADS_DIR
 from render.timer import render_timer
 from render.spinner import render_spinner
-from render.qr import render_qr
+from render.qr import POSITIONS, render_qr, render_qr_still
 from render.motionbg import render_motion_bg
 
 # When frozen by PyInstaller the static files live under the unpack dir.
@@ -34,10 +38,12 @@ _BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 app = Flask(__name__, static_folder=os.path.join(_BASE_DIR, "static"),
             static_url_path="/static")
 
-# The largest legitimate payload (20 entries x 40 chars plus options) is well
-# under 2 KB; capping the body also caps json int parsing, which is quadratic
-# in digit count on Python 3.9 (a multi-MB number would pin a core for ages).
-app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
+# Background-image uploads need headroom, so the global cap is generous; the
+# /api/render route below enforces its own small JSON limit so a huge JSON
+# number can't pin a core (quadratic int parsing on Python 3.9).
+MAX_JSON_BYTES = 64 * 1024
+MAX_UPLOAD_BYTES = 12 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 
 # Localhost-only trust model: reject foreign Host headers so a DNS-rebound
 # page (attacker.com -> 127.0.0.1) cannot drive the unauthenticated API.
@@ -211,6 +217,25 @@ def _str_field(options, key, lo, hi, required, label):
     return value
 
 
+UPLOAD_NAME_RE = re.compile(r"[A-Za-z0-9._-]+\.(png|jpg|jpeg|webp)")
+
+
+def _background_field(options):
+    """Validate an optional uploaded-background filename. Empty/absent -> "".
+    Must be a safe name that resolves to a real file inside UPLOADS_DIR."""
+    value = options.get("background", "")
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str) or not UPLOAD_NAME_RE.fullmatch(value):
+        raise ValidationError("That background image name is not valid.")
+    root = os.path.realpath(UPLOADS_DIR)
+    path = os.path.realpath(os.path.join(root, value))
+    if not path.startswith(root + os.sep) or not os.path.isfile(path):
+        raise ValidationError(
+            "That background image is no longer available — re-upload it.")
+    return value
+
+
 def validate_qr_options(options):
     url = _str_field(options, "url", 1, 1000, True, "The URL or text")
     heading = _str_field(options, "heading", 0, 30, False, "Heading")
@@ -218,12 +243,18 @@ def validate_qr_options(options):
     duration = _int_field(
         options, "duration_seconds", 5, 60, 15, "Duration (seconds)")
 
+    position = options.get("position", "center")
+    if not isinstance(position, str) or position not in POSITIONS:
+        raise ValidationError("That QR position is not valid.")
+
     return {
         "url": url,
         "heading": heading,
         "caption": caption,
         "accent": _accent_field(options),
         "duration_seconds": duration,
+        "position": position,
+        "background": _background_field(options),
     }
 
 
@@ -266,6 +297,8 @@ def api_health():
 
 @app.route("/api/render", methods=["POST"])
 def api_render():
+    if request.content_length and request.content_length > MAX_JSON_BYTES:
+        return jsonify({"error": "Request too large."}), 413
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": (
@@ -289,6 +322,48 @@ def api_render():
 
     job_id = jobs.submit(visual_type, clean_options)
     return jsonify({"job_id": job_id}), 202
+
+
+@app.route("/api/qr-preview", methods=["POST"])
+def api_qr_preview():
+    """Render one still frame of the QR card as a PNG so the UI can show the
+    REAL, scannable code (not an approximation) and update it live."""
+    if request.content_length and request.content_length > MAX_JSON_BYTES:
+        return jsonify({"error": "Request too large."}), 413
+    options = request.get_json(silent=True)
+    if not isinstance(options, dict):
+        return jsonify({"error": "Body must be a JSON options object."}), 400
+    try:
+        clean = validate_qr_options(options)
+    except ValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    img = render_qr_still(clean, max_width=900)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png")
+
+
+@app.route("/api/upload-bg", methods=["POST"])
+def api_upload_bg():
+    """Accept a background image, re-encode it through Pillow (which strips
+    anything that isn't a real image), and store it in UPLOADS_DIR. Returns
+    the stored filename to pass back as the qr `background` option."""
+    file = request.files.get("image")
+    if file is None or not file.filename:
+        return jsonify({"error": "No image was uploaded."}), 400
+    try:
+        img = Image.open(file.stream)
+        img.load()
+        img = img.convert("RGB")
+    except Exception:
+        return jsonify({"error": (
+            "That file is not an image we can read (use PNG or JPG).")}), 400
+
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+    name = "bg_{0}.png".format(uuid.uuid4().hex[:16])
+    img.save(os.path.join(UPLOADS_DIR, name), format="PNG")
+    return jsonify({"filename": name})
 
 
 @app.route("/api/jobs/<job_id>")
@@ -315,6 +390,10 @@ def _version_tuple(tag):
 
 @app.route("/api/update-check")
 def api_update_check():
+    # ?force=1 re-queries GitHub (the manual "Check for updates" button); the
+    # boot-time check only queries once.
+    if request.args.get("force"):
+        _update["checked"] = False
     if not _update["checked"]:
         _update["checked"] = True
         try:

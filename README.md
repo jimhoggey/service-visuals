@@ -38,9 +38,11 @@ the new version, swaps itself out, and restarts. No manual reinstalling.
      warn colour in the final 10 seconds, hold at 0:00.
    - **Spinner**: one entry per line (2–20), Random or Choose-winner mode,
      accent colour. Try **Test Spin** in the preview.
-   - **QR card**: a "scan to…" code from any URL or text, with an optional
-     heading and caption, accent colour, and clip length — perfect for giving,
-     connect cards and signups.
+   - **QR card**: a "scan to…" code from any website or plain text, with an
+     optional heading and caption, accent colour, a 9-way on-screen position,
+     and an optional background image. The preview shows the real, scannable
+     code (hit **Refresh** to regenerate) — perfect for giving, connect cards
+     and signups.
    - **Motion background**: a seamlessly-looping ambient background in your
      accent colour — Aurora, Bokeh or Waves — for worship and ambient moments.
 2. Hit **Export**. The video renders locally.

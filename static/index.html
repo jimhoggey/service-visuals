@@ -367,11 +367,11 @@
           <fieldset class="group">
             <legend>Link or text</legend>
             <div class="label-row">
-              <label for="qr-url">URL OR TEXT TO ENCODE</label>
+              <label for="qr-url">WEBSITE OR PLAIN TEXT</label>
             </div>
             <input type="text" id="qr-url" spellcheck="false" autocomplete="off"
               placeholder="https://church.example/give">
-            <p class="hint" id="qr-url-hint">1 to 1000 characters</p>
+            <p class="hint" id="qr-url-hint">A web address, or any plain text — 1 to 1000 characters</p>
           </fieldset>
 
           <fieldset class="group">
@@ -420,6 +420,33 @@
           </fieldset>
 
           <fieldset class="group">
+            <legend>Position on screen</legend>
+            <div class="pos-grid" id="qr-pos-grid" role="radiogroup" aria-label="QR position">
+              <button type="button" class="pos-cell" data-pos="top-left" aria-label="Top left"></button>
+              <button type="button" class="pos-cell" data-pos="top-center" aria-label="Top centre"></button>
+              <button type="button" class="pos-cell" data-pos="top-right" aria-label="Top right"></button>
+              <button type="button" class="pos-cell" data-pos="mid-left" aria-label="Middle left"></button>
+              <button type="button" class="pos-cell is-active" data-pos="center" aria-label="Centre"></button>
+              <button type="button" class="pos-cell" data-pos="mid-right" aria-label="Middle right"></button>
+              <button type="button" class="pos-cell" data-pos="bottom-left" aria-label="Bottom left"></button>
+              <button type="button" class="pos-cell" data-pos="bottom-center" aria-label="Bottom centre"></button>
+              <button type="button" class="pos-cell" data-pos="bottom-right" aria-label="Bottom right"></button>
+            </div>
+            <input type="hidden" id="qr-position" value="center">
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Background image (optional)</legend>
+            <div class="bg-row">
+              <label class="btn btn-file" for="qr-bg-file">CHOOSE IMAGE&#8230;</label>
+              <input class="vh" type="file" id="qr-bg-file" accept="image/png,image/jpeg,image/webp">
+              <span class="bg-name" id="qr-bg-name">Dark backdrop</span>
+              <button type="button" class="btn btn-clear" id="qr-bg-clear" hidden>CLEAR</button>
+            </div>
+            <p class="hint" id="qr-bg-hint">PNG or JPG. It's darkened so the code stays readable.</p>
+          </fieldset>
+
+          <fieldset class="group">
             <legend>Length</legend>
             <div class="num-field num-field-wide">
               <label for="qr-duration">CLIP LENGTH (SECONDS)</label>
@@ -436,9 +463,13 @@
 
       <div class="preview-pane">
         <div class="panel preview-panel">
-          <canvas id="qr-canvas" width="960" height="540" role="img" aria-label="QR card preview"></canvas>
+          <div class="qr-preview-wrap">
+            <img id="qr-preview-img" class="qr-preview-img" alt="Live QR card preview" width="960" height="540">
+            <div class="qr-preview-loading" id="qr-preview-loading" hidden>GENERATING&#8230;</div>
+          </div>
           <div class="preview-meta">
-            <p class="preview-caption">PREVIEW &#8212; approximate</p>
+            <p class="preview-caption">LIVE PREVIEW &#8212; this is the real, scannable code</p>
+            <button type="button" class="btn btn-refresh" id="qr-refresh">&#8635; REFRESH</button>
             <p class="spec-line">1920x1080 - 30fps - H.264 MP4</p>
           </div>
 
@@ -586,6 +617,14 @@
   </section>
 
 </main>
+
+<footer class="app-footer">
+  <button type="button" class="version-btn" id="version-btn" title="Click to check for updates">
+    SERVICE VISUALS <span id="version-label">v—</span>
+  </button>
+  <button type="button" class="btn btn-check" id="check-updates">CHECK FOR UPDATES</button>
+  <span class="update-note" id="update-note" role="status"></span>
+</footer>
 
 </body>
 </html>

@@ -98,38 +98,53 @@
 
   // --------------------------------------------------------- update checker
 
-  function checkForUpdate() {
-    fetch("/api/update-check", { cache: "no-store" })
+  var canSelfInstall = false;   // set from the server (packaged app vs source)
+
+  // Query the server (which queries GitHub). force=true re-checks on demand
+  // (the footer button); manual=true shows an "up to date" note when there's
+  // nothing new. Always refreshes the footer version label.
+  function checkForUpdate(force, manual) {
+    if (manual) $("update-note").textContent = "Checking…";
+    var url = "/api/update-check" + (force ? "?force=1" : "");
+    fetch(url, { cache: "no-store" })
       .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("bad status")); })
       .then(function (j) {
-        if (!j || !j.update_available) return;
-        $("update-text").textContent = "UPDATE " + j.latest + " AVAILABLE";
-        $("update-get").textContent = j.can_self_install ? "INSTALL" : "GET";
-        $("update-pill").hidden = false;
-        $("update-get").addEventListener("click", function () {
-          if (!j.can_self_install) {
-            // Running from source: just open the release page.
-            fetch("/api/open-release", { method: "POST" }).catch(function () {});
-            return;
-          }
-          $("update-get").disabled = true;
-          fetch("/api/update-install", { method: "POST" })
-            .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
-            .then(function (res) {
-              if (!res.ok) {
-                $("update-text").textContent = ((res.body && res.body.error) || "Update failed.").toUpperCase();
-                $("update-get").disabled = false;
-                return;
-              }
-              watchInstall();
-            })
-            .catch(function () { $("update-get").disabled = false; });
-        });
-        $("update-dismiss").addEventListener("click", function () {
-          $("update-pill").hidden = true;
-        });
+        if (j && j.current) $("version-label").textContent = j.current;
+        canSelfInstall = !!(j && j.can_self_install);
+        if (j && j.update_available) {
+          $("update-text").textContent = "UPDATE " + j.latest + " AVAILABLE";
+          $("update-get").textContent = canSelfInstall ? "INSTALL" : "GET";
+          $("update-pill").hidden = false;
+          $("update-dismiss").hidden = false;
+          if (manual) $("update-note").textContent = j.latest + " is available.";
+        } else if (manual) {
+          $("update-note").textContent = "You're up to date.";
+        }
       })
-      .catch(function () { /* offline or old server — stay quiet */ });
+      .catch(function () {
+        if (manual) $("update-note").textContent = "Couldn't reach GitHub.";
+        /* otherwise stay quiet — offline is fine */
+      });
+  }
+
+  function startSelfInstall() {
+    if (!canSelfInstall) {
+      // Running from source: just open the release page in the browser.
+      fetch("/api/open-release", { method: "POST" }).catch(function () {});
+      return;
+    }
+    $("update-get").disabled = true;
+    fetch("/api/update-install", { method: "POST" })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+      .then(function (res) {
+        if (!res.ok) {
+          $("update-text").textContent = ((res.body && res.body.error) || "Update failed.").toUpperCase();
+          $("update-get").disabled = false;
+          return;
+        }
+        watchInstall();
+      })
+      .catch(function () { $("update-get").disabled = false; });
   }
 
   function watchInstall() {
@@ -164,9 +179,20 @@
 
   var VIEWS = ["view-home", "view-timer", "view-spinner", "view-qr", "view-motionbg"];
 
+  var VIEW_KIND = {
+    "view-timer": "timer", "view-spinner": "spinner",
+    "view-qr": "qr", "view-motionbg": "motionbg"
+  };
+
   function showView(id) {
     VIEWS.forEach(function (v) { $(v).hidden = (v !== id); });
     window.scrollTo(0, 0);
+    // Returning to a config view must present a usable form. After an export
+    // the fieldset is left disabled (only "Make another" re-enabled it), so
+    // re-entering would show locked fields — clear that state on entry unless
+    // a render for this kind is actually in flight.
+    var kind = VIEW_KIND[id];
+    if (kind && !pollHandles[kind]) clearExportState(kind);
     var title = document.querySelector("#" + id + " .view-title");
     if (title) title.focus();
     // Motion-bg previews run a rAF loop; stop it whenever we leave that view.
@@ -672,168 +698,34 @@
 
   // =============================================================== QR =======
 
+  // The QR position and uploaded-background filename live outside the form
+  // fields (position is a hidden input; background is a server-side upload).
+  var qrBackground = "";                 // uploaded filename, or "" for none
+  var qrPreviewTimer = 0;                // debounce handle
+  var qrPreviewUrl = null;               // current object URL (revoked on swap)
+  var qrPreviewSeq = 0;                  // guards against out-of-order previews
+
   function readQr() {
     return {
       url: $("qr-url").value.trim(),
       heading: $("qr-heading").value.trim(),
       caption: $("qr-caption").value.trim(),
       accent: currentAccent("qr"),
-      duration: toInt($("qr-duration").value, 15)
+      duration: toInt($("qr-duration").value, 15),
+      position: $("qr-position").value || "center",
+      background: qrBackground
     };
   }
 
   function validateQr() {
     var q = readQr();
-    if (q.url.length < 1) return "Enter a URL or some text to encode.";
-    if (q.url.length > 1000) return "The URL or text must be 1000 characters or fewer.";
+    if (q.url.length < 1) return "Enter a website or some text to encode.";
+    if (q.url.length > 1000) return "The website or text must be 1000 characters or fewer.";
     if (q.heading.length > 30) return "The heading must be 30 characters or fewer.";
     if (q.caption.length > 60) return "The caption must be 60 characters or fewer.";
     var d = intFrom($("qr-duration"));
     if (d === null || d < 5 || d > 60) return "Clip length must be a whole number from 5 to 60 seconds.";
     return null;
-  }
-
-  // Deterministic stylised QR glyph: a grid of dark modules on a white card,
-  // with three finder squares (top-left/top-right/bottom-left) so it reads as
-  // a QR. This is a PLACEHOLDER — the real code is generated server-side.
-  function drawQrGlyph(ctx, x, y, size) {
-    var n = 25;                       // modules across (odd; typical small QR)
-    var m = size / n;                 // module px
-    ctx.fillStyle = "#111417";
-    // pseudo-random but deterministic fill
-    var seed = 0;
-    function rnd() {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-      return seed / 0x7fffffff;
-    }
-    function inFinder(r, c) {
-      // 7x7 finder regions (with 1-module separator) at 3 corners
-      var tl = (r < 8 && c < 8);
-      var tr = (r < 8 && c >= n - 8);
-      var bl = (r >= n - 8 && c < 8);
-      return tl || tr || bl;
-    }
-    for (var r = 0; r < n; r++) {
-      for (var c = 0; c < n; c++) {
-        if (inFinder(r, c)) continue;
-        if (rnd() > 0.52) {
-          ctx.fillRect(x + c * m, y + r * m, Math.ceil(m), Math.ceil(m));
-        }
-      }
-    }
-    // Finder squares: outer 7x7 dark ring + inner 3x3 dark core.
-    function finder(fr, fc) {
-      var fx = x + fc * m, fy = y + fr * m;
-      ctx.fillStyle = "#111417";
-      ctx.fillRect(fx, fy, 7 * m, 7 * m);
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(fx + m, fy + m, 5 * m, 5 * m);
-      ctx.fillStyle = "#111417";
-      ctx.fillRect(fx + 2 * m, fy + 2 * m, 3 * m, 3 * m);
-    }
-    finder(0, 0);
-    finder(0, n - 7);
-    finder(n - 7, 0);
-  }
-
-  function drawQrPreview() {
-    var canvas = $("qr-canvas");
-    var ctx = canvas.getContext("2d");
-    paintBackground(ctx);
-
-    var q = readQr();
-    var accent = q.accent;
-
-    // Layout mirrors qr.py: card 560 (280 here), heading above, caption below,
-    // whole stack vertically centred.
-    var cardSize = 280;               // render CARD_SIZE 560 at half scale
-    var cardRadius = 20;              // render 40
-    var headingGap = 20, captionGap = 18;
-
-    ctx.textAlign = "center";
-
-    var headingText = q.heading ? q.heading.toUpperCase() : "";
-    var headingH = headingText ? 36 : 0;
-    var captionH = q.caption ? 20 : 0;
-
-    var stackH = cardSize;
-    if (headingH) stackH += headingH + headingGap;
-    if (captionH) stackH += captionH + captionGap;
-
-    var top = (PH - stackH) / 2;
-    var yy = top;
-    var headingTop = null, captionTop = null, cardTop;
-    if (headingH) { headingTop = yy; yy += headingH + headingGap; }
-    cardTop = yy;
-    yy += cardSize;
-    if (captionH) captionTop = yy + captionGap;
-
-    var cardLeft = PW / 2 - cardSize / 2;
-
-    // heading (accent, tracked)
-    if (headingText) {
-      ctx.textBaseline = "middle";
-      ctx.font = "600 34px " + FONT_LABEL;
-      ctx.fillStyle = accent;
-      var track = 3;
-      var totalW = 0;
-      headingText.split("").forEach(function (ch) { totalW += ctx.measureText(ch).width + track; });
-      totalW -= track;
-      var hx = PW / 2 - totalW / 2;
-      var hy = headingTop + headingH / 2;
-      ctx.textAlign = "left";
-      headingText.split("").forEach(function (ch) {
-        ctx.fillText(ch, hx, hy);
-        hx += ctx.measureText(ch).width + track;
-      });
-      ctx.textAlign = "center";
-    }
-
-    // white rounded card
-    roundRectPath(ctx, cardLeft, cardTop, cardSize, cardSize, cardRadius);
-    ctx.fillStyle = "#ffffff";
-    ctx.fill();
-
-    // QR glyph centred inside the card (quiet zone ~ 8 modules margin)
-    var pad = 18;                     // render CARD_PAD 36 at half
-    drawQrGlyph(ctx, cardLeft + pad, cardTop + pad, cardSize - 2 * pad);
-
-    // soft accent ring around the card (static representation of the breathe)
-    var ringGap = 11;
-    ctx.strokeStyle = accent;
-    ctx.globalAlpha = 0.55;
-    ctx.lineWidth = 3;
-    roundRectPath(ctx, cardLeft - ringGap, cardTop - ringGap,
-      cardSize + 2 * ringGap, cardSize + 2 * ringGap, cardRadius + ringGap);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-
-    // caption (off-white)
-    if (q.caption) {
-      ctx.textBaseline = "middle";
-      ctx.font = "500 19px " + FONT_LABEL;
-      ctx.fillStyle = TEXT_LIGHT;
-      ctx.fillText(q.caption, PW / 2, captionTop + captionH / 2);
-    }
-  }
-
-  function updateQr() {
-    var err = validateQr();
-    $("qr-export").disabled = !!err;
-    var hint = $("qr-url-hint");
-    // Only surface URL-specific problems on the url hint; others go generic.
-    var urlErr = null;
-    var url = $("qr-url").value.trim();
-    if (url.length < 1) urlErr = "Enter a URL or some text to encode.";
-    else if (url.length > 1000) urlErr = "Must be 1000 characters or fewer.";
-    hint.textContent = urlErr || "1 to 1000 characters";
-    hint.classList.toggle("is-bad", !!urlErr);
-    var dHint = $("qr-duration-hint");
-    var d = intFrom($("qr-duration"));
-    var dErr = (d === null || d < 5 || d > 60) ? "5 to 60 seconds only." : null;
-    dHint.textContent = dErr || "5 to 60 seconds";
-    dHint.classList.toggle("is-bad", !!dErr);
-    drawQrPreview();
   }
 
   function qrPayload() {
@@ -845,9 +737,60 @@
         heading: q.heading,
         caption: q.caption,
         accent: q.accent,
-        duration_seconds: q.duration
+        duration_seconds: q.duration,
+        position: q.position,
+        background: q.background
       }
     };
+  }
+
+  // Fetch a REAL still of the card from the server so the preview shows the
+  // exact scannable code (and any background image / position). Debounced.
+  function fetchQrPreview() {
+    if (validateQr()) return;            // don't preview an invalid config
+    var seq = ++qrPreviewSeq;
+    $("qr-preview-loading").hidden = false;
+    fetch("/api/qr-preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(qrPayload().options)
+    })
+      .then(function (r) { if (!r.ok) throw new Error("bad"); return r.blob(); })
+      .then(function (blob) {
+        if (seq !== qrPreviewSeq) return; // a newer request superseded this one
+        var url = URL.createObjectURL(blob);
+        $("qr-preview-img").src = url;
+        if (qrPreviewUrl) URL.revokeObjectURL(qrPreviewUrl);
+        qrPreviewUrl = url;
+        $("qr-preview-loading").hidden = true;
+      })
+      .catch(function () {
+        if (seq !== qrPreviewSeq) return;
+        $("qr-preview-loading").hidden = true;
+      });
+  }
+
+  function scheduleQrPreview() {
+    if (qrPreviewTimer) clearTimeout(qrPreviewTimer);
+    qrPreviewTimer = setTimeout(fetchQrPreview, 350);
+  }
+
+  function updateQr() {
+    var err = validateQr();
+    $("qr-export").disabled = !!err;
+    var hint = $("qr-url-hint");
+    var urlErr = null;
+    var url = $("qr-url").value.trim();
+    if (url.length < 1) urlErr = "Enter a website or some text to encode.";
+    else if (url.length > 1000) urlErr = "Must be 1000 characters or fewer.";
+    hint.textContent = urlErr || "A web address, or any plain text — 1 to 1000 characters";
+    hint.classList.toggle("is-bad", !!urlErr);
+    var dHint = $("qr-duration-hint");
+    var d = intFrom($("qr-duration"));
+    var dErr = (d === null || d < 5 || d > 60) ? "5 to 60 seconds only." : null;
+    dHint.textContent = dErr || "5 to 60 seconds";
+    dHint.classList.toggle("is-bad", !!dErr);
+    scheduleQrPreview();
   }
 
   // ========================================================= MOTION BG ======
@@ -1189,13 +1132,18 @@
     updaters[kind]();
   }
 
-  function resetExport(kind) {
+  // Return a view to its clean, editable form state (no focus change).
+  function clearExportState(kind) {
     $(kind + "-progress").hidden = true;
     $(kind + "-done").hidden = true;
     hideError(kind);
     setProgress(kind, 0);
     setFormDisabled(kind, false);
     updaters[kind]();
+  }
+
+  function resetExport(kind) {
+    clearExportState(kind);
     $(kind + "-export").focus();
   }
 
@@ -1327,6 +1275,58 @@
   });
   $("qr-again").addEventListener("click", function () { resetExport("qr"); });
   $("qr-reveal").addEventListener("click", function () { revealInFinder("qr"); });
+  $("qr-refresh").addEventListener("click", function () {
+    if (qrPreviewTimer) clearTimeout(qrPreviewTimer);
+    fetchQrPreview();
+  });
+
+  // position 3x3 grid
+  Array.prototype.forEach.call(
+    document.querySelectorAll("#qr-pos-grid .pos-cell"),
+    function (cell) {
+      cell.addEventListener("click", function () {
+        document.querySelectorAll("#qr-pos-grid .pos-cell").forEach(
+          function (c) { c.classList.remove("is-active"); });
+        cell.classList.add("is-active");
+        $("qr-position").value = cell.dataset.pos;
+        fetchQrPreview();
+      });
+    }
+  );
+
+  // background image upload
+  $("qr-bg-file").addEventListener("change", function () {
+    var file = this.files && this.files[0];
+    if (!file) return;
+    $("qr-bg-name").textContent = "Uploading…";
+    var fd = new FormData();
+    fd.append("image", file);
+    fetch("/api/upload-bg", { method: "POST", body: fd })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.j.filename) {
+          $("qr-bg-name").textContent = "Dark backdrop";
+          showError("qr", (res.j && res.j.error) || "Could not use that image.");
+          return;
+        }
+        qrBackground = res.j.filename;
+        $("qr-bg-name").textContent = file.name;
+        $("qr-bg-clear").hidden = false;
+        hideError("qr");
+        fetchQrPreview();
+      })
+      .catch(function () {
+        $("qr-bg-name").textContent = "Dark backdrop";
+        showError("qr", "Could not upload the image — is the server running?");
+      });
+  });
+  $("qr-bg-clear").addEventListener("click", function () {
+    qrBackground = "";
+    $("qr-bg-file").value = "";
+    $("qr-bg-name").textContent = "Dark backdrop";
+    $("qr-bg-clear").hidden = true;
+    fetchQrPreview();
+  });
 
   // motion-bg form
   $("motionbg-form").addEventListener("input", updateMotionBg);
@@ -1341,10 +1341,18 @@
   $("motionbg-again").addEventListener("click", function () { resetExport("motionbg"); });
   $("motionbg-reveal").addEventListener("click", function () { revealInFinder("motionbg"); });
 
+  // update banner + footer (handlers attached once)
+  $("update-get").addEventListener("click", startSelfInstall);
+  $("update-dismiss").addEventListener("click", function () {
+    $("update-pill").hidden = true;
+  });
+  $("check-updates").addEventListener("click", function () { checkForUpdate(true, true); });
+  $("version-btn").addEventListener("click", function () { checkForUpdate(true, true); });
+
   // boot
   refreshHealth();
   setInterval(refreshHealth, 10000);
-  checkForUpdate();
+  checkForUpdate(false, false);
   updateTimer();
   updateSpinner();
   updateQr();

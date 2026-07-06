@@ -1,32 +1,34 @@
 """QR "scan to..." card renderer.
 
-Builds a static base ONCE (vignette background + white rounded card + crisp
-dark-on-white QR + accent heading above + off-white caption below), then per
-frame composites only a soft accent ring that gently breathes OUTSIDE the
-card. Everything that matters for a scan is static: the card, the QR, and the
-quiet zone never move or scale, so the code stays crisp and readable.
+Builds a static base ONCE (background + white rounded card + crisp
+dark-on-white QR + accent heading + off-white caption), then per frame
+composites only a soft accent ring that gently breathes OUTSIDE the card.
+Everything that matters for a scan is static: the card, the QR, and the quiet
+zone never move or scale, so the code stays crisp and readable.
 
-Scannability rules (non-negotiable):
+Scannability rules (non-negotiable — a code that won't scan is useless):
 
-- The QR is ALWAYS dark modules (#111417) on a WHITE card. Never inverted;
+- The QR is ALWAYS dark modules (#0a0c0e) on a WHITE card. Never inverted;
   many phone scanners refuse light-on-dark codes.
-- A quiet zone of >= 4 modules of white surrounds the code. We reserve 8
-  modules of margin (4 each side) inside the card.
-- Modules are drawn as crisp filled squares with NO anti-aliasing, and the
-  grid is pixel-snapped and centered so rounding never pushes a module off
-  the card or blurs an edge.
+- Modules are drawn BIG. We size the card to the code so modules land around
+  MODULE_TARGET px (never below MODULE_MIN), which survives H.264/yuv420p
+  softening and reads from across a room and off a projector.
+- Error correction is level Q (25%), so partial blur/glare still decodes.
+- A quiet zone of QUIET (>=4) white modules surrounds the code.
+- Modules are crisp filled squares on exact integer boundaries (no
+  anti-aliasing, no dark-module "dot gain" from overlapping rectangles).
 - The accent colour touches ONLY the heading text and the breathing ring.
 
-Seamless loop:
+Position: the whole heading+card+caption block can be anchored to a 3x3 grid
+(top-left ... bottom-right, default center), so the code can sit out of the
+way of other lower-thirds.
 
-- total_frames = duration_seconds * OUTPUT_FPS. The ring's opacity/width are
-  functions of phase = 2*pi*frame/total_frames via sin(), so frame 0 is
-  identical to frame total_frames (no fade-in, no jump). ProPresenter loops
-  the exported clip, so a perfect wrap-around is required.
-- Only the ring changes, so we feed frames to the encoder at a lower input
-  fps (INPUT_FPS) and let ffmpeg duplicate up to 30. total_frames is computed
-  at INPUT_FPS and the sin() period is the whole clip, so the loop stays
-  seamless at the chosen input fps too.
+Background: an uploaded image can replace the vignette; it is cover-fit to
+1080p and darkened with a scrim so the card and text stay legible.
+
+Seamless loop: total_frames = duration * INPUT_FPS. The ring's opacity/width
+follow sin(phase), phase = 2*pi*frame/total_frames, so frame 0 == frame N
+(no fade-in, no jump). ProPresenter loops the clip, so a clean wrap is required.
 """
 
 import math
@@ -37,7 +39,8 @@ import segno
 from PIL import Image, ImageDraw
 
 from . import fonts
-from .encoder import (FrameEncoder, HEIGHT, OUTPUT_FPS, WIDTH, export_path)
+from .encoder import (FrameEncoder, HEIGHT, OUTPUT_FPS, UPLOADS_DIR, WIDTH,
+                      export_path)
 
 # Pillow >= 9.1 moved resampling filters into an enum; keep 3.9-safe access.
 _RESAMPLING = getattr(Image, "Resampling", Image)
@@ -50,30 +53,37 @@ BG_BASE = "#0e1013"
 BG_EDGE = "#07080a"
 TEXT_LIGHT = "#f2f0eb"
 CARD_WHITE = "#ffffff"
-QR_DARK = "#111417"
+QR_DARK = "#0a0c0e"
 DEFAULT_ACCENT = "#e8b44f"
+
+# ---------------------------------------------------------------- QR sizing
+
+QR_ERROR = "q"                  # 25% error correction — robust to blur/glare
+QUIET = 4                       # quiet-zone modules of white each side
+MODULE_TARGET = 16              # preferred module size (px) — nice and chunky
+MODULE_MIN = 9                  # never shrink below this
+CARD_PAD = 46                   # white padding between quiet zone and card edge
+CARD_MAX = 820                  # cap card side so it fits with heading/caption
+CARD_RADIUS = 40
 
 # ---------------------------------------------------------------- layout
 
 CENTER_X = WIDTH // 2
-CARD_SIZE = 560                 # outer white card, square (px)
-CARD_RADIUS = 40
-QUIET_MODULES = 8               # total quiet-zone margin (4 each side) in modules
-CARD_PAD = 36                   # white padding between card edge and QR block
+MARGIN = 96                     # gap from frame edge for cornered positions
 
-HEADING_SIZE = 72
-CAPTION_SIZE = 40
-HEADING_GAP = 40                # px between heading baseline block and card
-CAPTION_GAP = 36                # px between card and caption
-HEADING_TRACKING = 6            # letter-spacing for the uppercase heading
+HEADING_SIZE = 76
+CAPTION_SIZE = 42
+HEADING_GAP = 42
+CAPTION_GAP = 38
+HEADING_TRACKING = 6
 
 # Ring geometry (outside the card).
-RING_GAP = 22                   # px from card edge to ring at rest
-RING_BASE_W = 3.0               # min stroke width (px)
-RING_SWING_W = 5.0              # added stroke width at peak
-RING_MIN_A = 40                 # min ring alpha (0..255)
-RING_MAX_A = 150                # max ring alpha
-RING_SS = 2                     # ring supersample for smooth curve
+RING_GAP = 24
+RING_BASE_W = 3.0
+RING_SWING_W = 5.0
+RING_MIN_A = 40
+RING_MAX_A = 150
+RING_SS = 2
 
 # ---------------------------------------------------------------- timeline
 
@@ -86,12 +96,33 @@ MAX_URL_LEN = 1000
 MAX_HEADING_LEN = 30
 MAX_CAPTION_LEN = 60
 
+POSITIONS = (
+    "top-left", "top-center", "top-right",
+    "mid-left", "center", "mid-right",
+    "bottom-left", "bottom-center", "bottom-right",
+)
+DEFAULT_POSITION = "center"
+
 
 # ---------------------------------------------------------------- helpers
 
 def _hex_rgb(hex_color):
     h = hex_color.lstrip("#")
     return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+def _resolve_background(name):
+    """Return an absolute path to an uploaded background, or None.
+
+    Validated to live inside UPLOADS_DIR (defends against traversal even
+    though app.py already checks)."""
+    if not name:
+        return None
+    root = os.path.realpath(UPLOADS_DIR)
+    path = os.path.realpath(os.path.join(root, name))
+    if path.startswith(root + os.sep) and os.path.isfile(path):
+        return path
+    return None
 
 
 def _clean_options(options):
@@ -111,16 +142,26 @@ def _clean_options(options):
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", str(accent)):
         accent = DEFAULT_ACCENT
 
+    position = options.get("position", DEFAULT_POSITION)
+    if position not in POSITIONS:
+        position = DEFAULT_POSITION
+
+    background = _resolve_background(options.get("background"))
+
     try:
         duration = int(options.get("duration_seconds", DEFAULT_DURATION))
     except (TypeError, ValueError):
         duration = DEFAULT_DURATION
     duration = max(MIN_DURATION, min(MAX_DURATION, duration))
 
-    return url, heading, caption, str(accent), duration
+    return {
+        "url": url, "heading": heading, "caption": caption,
+        "accent": str(accent), "position": position,
+        "background": background, "duration": duration,
+    }
 
 
-def _build_background():
+def _vignette_background():
     """1920x1080 RGB: BG_BASE with a radial vignette to BG_EDGE at edges."""
     small_w, small_h = 240, 135
     base = _hex_rgb(BG_BASE)
@@ -141,54 +182,72 @@ def _build_background():
     return img.resize((WIDTH, HEIGHT), _BILINEAR)
 
 
+def _image_background(path):
+    """Cover-fit an uploaded image to 1080p and darken it with a scrim so the
+    white card and accent text stay legible on any photo."""
+    try:
+        img = Image.open(path).convert("RGB")
+    except Exception:
+        return _vignette_background()
+    iw, ih = img.size
+    scale = max(WIDTH / iw, HEIGHT / ih)
+    nw, nh = int(math.ceil(iw * scale)), int(math.ceil(ih * scale))
+    img = img.resize((nw, nh), _LANCZOS)
+    x = (nw - WIDTH) // 2
+    y = (nh - HEIGHT) // 2
+    img = img.crop((x, y, x + WIDTH, y + HEIGHT))
+    # 48% black scrim for legibility.
+    scrim = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
+    return Image.blend(img, scrim, 0.48)
+
+
+def _build_background(background):
+    return _image_background(background) if background \
+        else _vignette_background()
+
+
 def _qr_matrix(url):
     """segno matrix as a list of rows of ints (0/1); n = side length."""
-    qr = segno.make(url, error="m")
+    qr = segno.make(url, error=QR_ERROR)
     matrix = [list(row) for row in qr.matrix]
     return matrix, len(matrix)
 
 
-def _draw_qr_on_card(card_draw, matrix, n, card_size):
-    """Draw crisp dark modules centered on the white card, with the quiet
-    zone. Returns (module_px, origin_x, origin_y) so callers can sample.
-
-    module_px = int(card_inner / (n + QUIET_MODULES)); the code is centered
-    inside CARD_PAD so leftover pixels split evenly and no module falls off.
-    """
-    card_inner = card_size - 2 * CARD_PAD
-    module_px = int(card_inner // (n + QUIET_MODULES))
-    if module_px < 1:
-        module_px = 1
-
-    code_px = module_px * n                    # just the modules (no quiet zone)
-    # Center the whole code within the full card so the quiet zone is even.
-    origin = (card_size - code_px) / 2.0
-    origin_x = int(round(origin))
-    origin_y = int(round(origin))
-
-    dark = _hex_rgb(QR_DARK)
-    for r in range(n):
-        y0 = origin_y + r * module_px
-        for c in range(n):
-            if matrix[r][c]:
-                x0 = origin_x + c * module_px
-                # +1 on the far edge keeps adjacent squares seamless (no
-                # background hairlines) without anti-aliasing.
-                card_draw.rectangle(
-                    [x0, y0, x0 + module_px, y0 + module_px], fill=dark)
-    return module_px, origin_x, origin_y
+def _module_px(n):
+    """Choose a module size: MODULE_TARGET, shrunk only if the card would
+    exceed CARD_MAX, and never below MODULE_MIN."""
+    span = n + 2 * QUIET                       # modules across incl. quiet zone
+    fit = (CARD_MAX - 2 * CARD_PAD) // span
+    return max(MODULE_MIN, min(MODULE_TARGET, int(fit)))
 
 
-def _build_card(matrix, n, card_size):
-    """White rounded card (RGBA) with the QR drawn on it. Returns the image
-    plus the drawing metadata for corner-sampling in the self-test."""
+def _build_card(matrix, n):
+    """White rounded card (RGBA) with the QR drawn crisp and centered.
+    Returns (card_image, card_size)."""
+    module_px = _module_px(n)
+    code_px = module_px * n
+    inner = code_px + 2 * QUIET * module_px    # code + quiet zone
+    card_size = inner + 2 * CARD_PAD
+
     card = Image.new("RGBA", (card_size, card_size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(card)
     draw.rounded_rectangle(
         [0, 0, card_size - 1, card_size - 1], radius=CARD_RADIUS,
         fill=_hex_rgb(CARD_WHITE) + (255,))
-    module_px, ox, oy = _draw_qr_on_card(draw, matrix, n, card_size)
-    return card, module_px, ox, oy
+
+    origin = (card_size - code_px) // 2        # exact-centered code block
+    dark = _hex_rgb(QR_DARK)
+    for r in range(n):
+        y0 = origin + r * module_px
+        for c in range(n):
+            if matrix[r][c]:
+                x0 = origin + c * module_px
+                # Exact cell: [x0 .. x0+module_px-1] fills module_px pixels with
+                # no overlap into the next cell, so dark and light modules are
+                # the same size (no dot gain that would fail a marginal scan).
+                draw.rectangle(
+                    [x0, y0, x0 + module_px - 1, y0 + module_px - 1], fill=dark)
+    return card, card_size
 
 
 def _text_width(font, text, tracking):
@@ -199,8 +258,7 @@ def _text_width(font, text, tracking):
 
 
 def _draw_tracked_text(draw, cx, top, text, font, fill, tracking):
-    """Draw horizontally-centered text at vertical position `top` with
-    letter-spacing. `top` is the y of the glyph bbox top."""
+    """Horizontally-centered text at glyph-bbox-top `top`, with letter-spacing."""
     total = _text_width(font, text, tracking)
     bbox = font.getbbox(text)
     x = cx - total / 2.0
@@ -210,15 +268,94 @@ def _draw_tracked_text(draw, cx, top, text, font, fill, tracking):
         x += font.getlength(ch) + tracking
 
 
-def _build_ring(card_top, card_size, phase, accent):
-    """RGBA overlay (full frame) with a single soft accent ring outside the
-    card. Opacity and width follow sin(phase) so frame 0 == frame N.
+def _layout(opts, card_size):
+    """Compute geometry for the heading+card+caption block at the chosen
+    position. Returns dict with card_cx, card_top, heading_top, caption_top."""
+    heading = opts["heading"].upper()
+    caption = opts["caption"]
+    heading_font = fonts.load("label", HEADING_SIZE) if heading else None
+    caption_font = fonts.load("caption", CAPTION_SIZE) if caption else None
 
-    Drawn at RING_SS supersample and downscaled with LANCZOS for a smooth
-    curve; the QR area is never touched (the ring sits in RING_GAP outside
-    the card).
-    """
-    s = 0.5 * (1.0 + math.sin(phase))          # 0..1, periodic in phase
+    heading_h = 0
+    if heading_font is not None:
+        hb = heading_font.getbbox(heading)
+        heading_h = hb[3] - hb[1]
+    caption_h = 0
+    if caption_font is not None:
+        cb = caption_font.getbbox(caption)
+        caption_h = cb[3] - cb[1]
+
+    block_h = card_size
+    if heading_h:
+        block_h += heading_h + HEADING_GAP
+    if caption_h:
+        block_h += caption_h + CAPTION_GAP
+
+    pos = opts["position"]
+    vert, horiz = pos.split("-") if "-" in pos else ("mid", "center")
+
+    # Horizontal: card center x.
+    half = card_size // 2
+    if horiz == "left":
+        card_cx = MARGIN + half
+    elif horiz == "right":
+        card_cx = WIDTH - MARGIN - half
+    else:
+        card_cx = CENTER_X
+
+    # Vertical: top of the whole block.
+    if vert == "top":
+        block_top = MARGIN
+    elif vert == "bottom":
+        block_top = HEIGHT - MARGIN - block_h
+    else:
+        block_top = (HEIGHT - block_h) // 2
+
+    y = block_top
+    heading_top = None
+    if heading_h:
+        heading_top = y
+        y += heading_h + HEADING_GAP
+    card_top = y
+    y += card_size
+    caption_top = (y + CAPTION_GAP) if caption_h else None
+
+    return {
+        "card_cx": card_cx, "card_top": card_top, "card_size": card_size,
+        "heading_top": heading_top, "caption_top": caption_top,
+        "heading_font": heading_font, "caption_font": caption_font,
+        "heading": heading, "caption": caption,
+    }
+
+
+def _compose_base(opts):
+    """Build the static base frame (RGB) and return (base_rgb, geometry)."""
+    matrix, n = _qr_matrix(opts["url"])
+    card, card_size = _build_card(matrix, n)
+    geo = _layout(opts, card_size)
+
+    base = _build_background(opts["background"]).convert("RGBA")
+    draw = ImageDraw.Draw(base)
+    accent = opts["accent"]
+
+    if geo["heading_font"] is not None:
+        _draw_tracked_text(
+            draw, geo["card_cx"], geo["heading_top"], geo["heading"],
+            geo["heading_font"], _hex_rgb(accent) + (255,), HEADING_TRACKING)
+    if geo["caption_font"] is not None:
+        _draw_tracked_text(
+            draw, geo["card_cx"], geo["caption_top"], geo["caption"],
+            geo["caption_font"], _hex_rgb(TEXT_LIGHT) + (255,), 0)
+
+    base.alpha_composite(card, (geo["card_cx"] - card_size // 2,
+                                geo["card_top"]))
+    return base.convert("RGB"), geo
+
+
+def _build_ring(geo, phase, accent):
+    """RGBA full-frame overlay: a single soft accent ring outside the card,
+    opacity/width periodic in phase (frame 0 == frame N)."""
+    s = 0.5 * (1.0 + math.sin(phase))
     alpha = int(round(RING_MIN_A + (RING_MAX_A - RING_MIN_A) * s))
     width = RING_BASE_W + RING_SWING_W * s
 
@@ -226,89 +363,51 @@ def _build_ring(card_top, card_size, phase, accent):
                         (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
-    left = (CENTER_X - card_size // 2 - RING_GAP) * RING_SS
-    top = (card_top - RING_GAP) * RING_SS
-    right = (CENTER_X + card_size // 2 + RING_GAP) * RING_SS
-    bottom = (card_top + card_size + RING_GAP) * RING_SS
+    cs = geo["card_size"]
+    cx = geo["card_cx"]
+    left = (cx - cs // 2 - RING_GAP) * RING_SS
+    top = (geo["card_top"] - RING_GAP) * RING_SS
+    right = (cx + cs // 2 + RING_GAP) * RING_SS
+    bottom = (geo["card_top"] + cs + RING_GAP) * RING_SS
     radius = (CARD_RADIUS + RING_GAP) * RING_SS
 
     draw.rounded_rectangle(
         [left, top, right, bottom], radius=radius,
         outline=_hex_rgb(accent) + (alpha,),
         width=max(1, int(round(width * RING_SS))))
-
     return overlay.resize((WIDTH, HEIGHT), _LANCZOS)
 
 
 # ---------------------------------------------------------------- renderer
 
+def render_qr_still(options, max_width=900):
+    """Render ONE representative frame (base + ring near peak) as an RGB PIL
+    image, downscaled to max_width. Used by the live preview endpoint so the
+    preview shows the exact, scannable QR that will be exported."""
+    opts = _clean_options(options)
+    base_rgb, geo = _compose_base(opts)
+    ring = _build_ring(geo, math.pi / 2.0, opts["accent"])   # peak brightness
+    frame = base_rgb.copy()
+    frame.paste(ring, (0, 0), ring)
+    if max_width and max_width < WIDTH:
+        h = int(HEIGHT * max_width / WIDTH)
+        frame = frame.resize((max_width, h), _LANCZOS)
+    return frame
+
+
 def render_qr(options, progress_cb):
     """Render the QR "scan to..." card MP4. Returns the filename basename."""
-    url, heading, caption, accent, duration = _clean_options(options)
+    opts = _clean_options(options)
+    base_rgb, geo = _compose_base(opts)
 
-    matrix, n = _qr_matrix(url)
-
-    # --- vertical layout: measure the stack, then center it as a block ---
-    heading_font = fonts.load("label", HEADING_SIZE) if heading else None
-    caption_font = fonts.load("caption", CAPTION_SIZE) if caption else None
-
-    heading_up = heading.upper()
-    heading_h = 0
-    if heading_font is not None:
-        hb = heading_font.getbbox(heading_up)
-        heading_h = hb[3] - hb[1]
-    caption_h = 0
-    if caption_font is not None:
-        cb = caption_font.getbbox(caption)
-        caption_h = cb[3] - cb[1]
-
-    stack_h = CARD_SIZE
-    if heading_h:
-        stack_h += heading_h + HEADING_GAP
-    if caption_h:
-        stack_h += caption_h + CAPTION_GAP
-
-    top = (HEIGHT - stack_h) // 2
-    y = top
-    heading_top = None
-    if heading_h:
-        heading_top = y
-        y += heading_h + HEADING_GAP
-    card_top = y
-    y += CARD_SIZE
-    caption_top = None
-    if caption_h:
-        caption_top = y + CAPTION_GAP
-
-    # --- build the static base once (bg + text + card + QR) ---
-    base = _build_background().convert("RGBA")
-    draw = ImageDraw.Draw(base)
-
-    if heading_font is not None:
-        _draw_tracked_text(
-            draw, CENTER_X, heading_top, heading_up, heading_font,
-            _hex_rgb(accent) + (255,), HEADING_TRACKING)
-    if caption_font is not None:
-        _draw_tracked_text(
-            draw, CENTER_X, caption_top, caption, caption_font,
-            _hex_rgb(TEXT_LIGHT) + (255,), 0)
-
-    card, module_px, ox, oy = _build_card(matrix, n, CARD_SIZE)
-    card_left = CENTER_X - CARD_SIZE // 2
-    base.alpha_composite(card, (card_left, card_top))
-
-    base_rgb = base.convert("RGB")
-
-    total_frames = duration * INPUT_FPS
-
-    out_path = export_path("qr", heading or "code")
+    total_frames = opts["duration"] * INPUT_FPS
+    out_path = export_path("qr", opts["heading"] or "code")
     with FrameEncoder(out_path, INPUT_FPS) as enc:
         for k in range(total_frames):
             phase = 2.0 * math.pi * k / total_frames
-            ring = _build_ring(card_top, CARD_SIZE, phase, accent)
+            ring = _build_ring(geo, phase, opts["accent"])
             frame = base_rgb.copy()
             frame.paste(ring, (0, 0), ring)
             enc.add_frame(frame)
             progress_cb(int((k + 1) * 100.0 / total_frames))
-
     return os.path.basename(out_path)

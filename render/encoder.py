@@ -41,6 +41,10 @@ def _default_exports_dir():
 
 EXPORTS_DIR = _default_exports_dir()
 
+# Uploaded background images live in a temp dir (they are inputs, not outputs,
+# so they don't belong next to the user's finished MP4s). Cleared by the OS.
+UPLOADS_DIR = os.path.join(tempfile.gettempdir(), "service-visuals-uploads")
+
 
 def export_path(prefix, descriptor):
     """Build a unique, filesystem-safe path in exports/.

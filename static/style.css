@@ -700,6 +700,127 @@ canvas {
   color: var(--accent);
 }
 
+/* ---- QR live image preview ---- */
+.qr-preview-wrap {
+  position: relative;
+  width: 100%;
+}
+.qr-preview-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0e1013;
+}
+.qr-preview-loading {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: rgba(11, 12, 14, 0.82);
+  border: 1px solid var(--line-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+}
+.btn-refresh {
+  padding: 6px 12px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+}
+
+/* ---- QR position 3x3 grid ---- */
+.pos-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  width: 132px;
+  aspect-ratio: 16 / 9;
+}
+.pos-cell {
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: #14161a;
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.12s, background 0.12s;
+}
+.pos-cell::after {
+  content: "";
+  position: absolute;
+  inset: 30% 30%;
+  border-radius: 2px;
+  background: #33373d;
+}
+.pos-cell:hover { border-color: var(--line-2); background: #191c21; }
+.pos-cell.is-active {
+  border-color: var(--accent);
+  background: rgba(232, 180, 79, 0.12);
+}
+.pos-cell.is-active::after { background: var(--accent); }
+.pos-cell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- QR background upload ---- */
+.bg-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.btn-file { font-size: 12px; }
+.bg-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-dim);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.btn-clear {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--red-ink);
+  border-color: var(--line-2);
+}
+
+/* ---- footer: version + check-for-updates ---- */
+.app-footer {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  max-width: 1180px;
+  margin: 28px auto 40px;
+  padding: 16px 24px 0;
+  border-top: 1px solid var(--line);
+}
+.version-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+}
+.version-btn:hover { color: var(--ink-dim); }
+.version-btn #version-label { color: var(--accent); }
+.btn-check { padding: 8px 14px; font-size: 11px; }
+.update-note {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
 .btn-test { margin-left: auto; }
 
 /* ----------------------------------------------------------- progress */
