@@ -821,6 +821,76 @@ canvas {
   color: var(--ink-dim);
 }
 
+/* ---- Spinner AI fill ---- */
+.entries-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+}
+.btn-ai {
+  flex: none;
+  padding: 7px 13px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: rgba(232, 180, 79, 0.10);
+  color: var(--accent);
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.btn-ai:hover { background: rgba(232, 180, 79, 0.18); }
+.ai-panel {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.ai-note {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+.ai-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ai-row input[type="text"],
+.ai-row input[type="password"] {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.ai-row input[type="number"] { width: 68px; flex: none; }
+.ai-link {
+  margin-top: 10px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.ai-link:hover { color: var(--ink-dim); }
+.ai-status {
+  margin: 10px 0 0;
+  min-height: 15px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+.ai-status.is-bad { color: var(--red-ink); }
+
 .btn-test { margin-left: auto; }
 
 /* ----------------------------------------------------------- progress */

@@ -696,6 +696,105 @@
     return { type: "spinner", options: options };
   }
 
+  // ----------------------------------------------------- AI fill (spinner)
+
+  var aiConfigured = false;
+
+  // Show the key-entry section or the generate section based on whether a key
+  // is stored on the server (never fetches the key itself — just a boolean).
+  function refreshAiStatus() {
+    return fetch("/api/ai/status", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        aiConfigured = !!(j && j.configured);
+        $("ai-key-section").hidden = aiConfigured;
+        $("ai-gen-section").hidden = !aiConfigured;
+      })
+      .catch(function () { /* offline — panel still opens to the key form */ });
+  }
+
+  function setAiStatus(msg, bad) {
+    var el = $("ai-status");
+    el.textContent = msg || "";
+    el.classList.toggle("is-bad", !!bad);
+  }
+
+  function toggleAiPanel() {
+    var panel = $("spinner-ai-panel");
+    var open = panel.hidden;
+    panel.hidden = !open;
+    $("spinner-ai-toggle").setAttribute("aria-expanded", String(open));
+    if (open) {
+      setAiStatus("");
+      refreshAiStatus().then(function () {
+        (aiConfigured ? $("ai-desc") : $("ai-key-input")).focus();
+      });
+    }
+  }
+
+  function saveAiKey() {
+    var key = $("ai-key-input").value.trim();
+    if (!key) { setAiStatus("Paste your OpenRouter key first.", true); return; }
+    setAiStatus("Saving…");
+    fetch("/api/ai/key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: key })
+    })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok) { setAiStatus((res.j && res.j.error) || "Could not save the key.", true); return; }
+        $("ai-key-input").value = "";
+        setAiStatus("Key saved. Describe what you need below.");
+        refreshAiStatus().then(function () { $("ai-desc").focus(); });
+      })
+      .catch(function () { setAiStatus("Could not reach the server.", true); });
+  }
+
+  function aiGenerate() {
+    var desc = $("ai-desc").value.trim();
+    if (!desc) { setAiStatus("Say what entries you need.", true); return; }
+    var count = intFrom($("ai-count"));
+    if (count === null || count < 1 || count > 20) {
+      setAiStatus("How many? must be 1 to 20.", true); return;
+    }
+    var existing = readEntries();
+    var room = 20 - existing.length;
+    if (room <= 0) { setAiStatus("The wheel is already full (20 max).", true); return; }
+
+    $("ai-generate").disabled = true;
+    setAiStatus("Asking the AI…");
+    fetch("/api/ai/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: desc, count: count, existing: existing })
+    })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        $("ai-generate").disabled = false;
+        if (!res.ok) { setAiStatus((res.j && res.j.error) || "The AI request failed.", true); return; }
+        var got = (res.j && res.j.entries) || [];
+        // Merge: keep existing, add new (case-insensitive), cap at 20.
+        var seen = {};
+        existing.forEach(function (e) { seen[e.toLowerCase()] = true; });
+        var added = 0;
+        got.forEach(function (e) {
+          var k = e.toLowerCase();
+          if (!seen[k] && existing.length < 20) { existing.push(e); seen[k] = true; added += 1; }
+        });
+        $("spinner-entries").value = existing.join("\n");
+        cancelTestSpin();
+        updateSpinner();
+        setAiStatus(added
+          ? ("Added " + added + " " + (added === 1 ? "entry" : "entries") + ".")
+          : "No new entries to add — try rewording.");
+      })
+      .catch(function () {
+        $("ai-generate").disabled = false;
+        setAiStatus("Could not reach the server.", true);
+      });
+  }
+
   // =============================================================== QR =======
 
   // The QR position and uploaded-background filename live outside the form
@@ -1253,6 +1352,23 @@
     updateSpinner();   // recomputes button state; ends with drawSpinnerPreview()
   });
   wireAccent("spinner", updateSpinner);
+
+  // AI fill panel
+  $("spinner-ai-toggle").addEventListener("click", toggleAiPanel);
+  $("ai-key-save").addEventListener("click", saveAiKey);
+  $("ai-generate").addEventListener("click", aiGenerate);
+  $("ai-change-key").addEventListener("click", function () {
+    $("ai-key-section").hidden = false;
+    $("ai-gen-section").hidden = true;
+    $("ai-key-input").focus();
+  });
+  // Enter in the AI text fields must act, not submit the export form.
+  $("ai-desc").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); aiGenerate(); }
+  });
+  $("ai-key-input").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); saveAiKey(); }
+  });
   $("spinner-test").addEventListener("click", testSpin);
   $("spinner-form").addEventListener("submit", function (e) {
     e.preventDefault();

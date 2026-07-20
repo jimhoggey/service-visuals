@@ -263,7 +263,32 @@
             </div>
             <textarea id="spinner-entries" rows="8" spellcheck="false"
               placeholder="Alice&#10;Bob&#10;Carmen&#10;Dan"></textarea>
-            <p class="hint">2 to 20 entries, up to 40 characters each</p>
+            <div class="entries-foot">
+              <p class="hint">2 to 20 entries, up to 40 characters each</p>
+              <button type="button" class="btn-ai" id="spinner-ai-toggle" aria-expanded="false">&#10022; FILL WITH AI</button>
+            </div>
+
+            <div class="ai-panel" id="spinner-ai-panel" hidden>
+              <div class="ai-key-section" id="ai-key-section" hidden>
+                <p class="ai-note">Paste your own free OpenRouter API key. It's stored only on
+                  this computer &#8212; get one at openrouter.ai/keys.</p>
+                <div class="ai-row">
+                  <input type="password" id="ai-key-input" placeholder="sk-or-&#8230;"
+                    autocomplete="off" spellcheck="false">
+                  <button type="button" class="btn" id="ai-key-save">SAVE KEY</button>
+                </div>
+              </div>
+              <div class="ai-gen-section" id="ai-gen-section" hidden>
+                <div class="ai-row">
+                  <input type="text" id="ai-desc" spellcheck="false"
+                    placeholder="What entries? e.g. books of the Bible, world capitals">
+                  <input type="number" id="ai-count" min="1" max="20" value="10" aria-label="How many entries">
+                  <button type="button" class="btn btn-accent" id="ai-generate">GENERATE</button>
+                </div>
+                <button type="button" class="ai-link" id="ai-change-key">Change API key</button>
+              </div>
+              <p class="ai-status" id="ai-status" role="status" aria-live="polite"></p>
+            </div>
           </fieldset>
 
           <fieldset class="group">

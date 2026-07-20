@@ -16,7 +16,7 @@ import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.0"
 GITHUB_REPO = "jimhoggey/service-visuals"
 
 import io
@@ -25,6 +25,7 @@ import uuid
 from flask import (Flask, jsonify, request, send_file, send_from_directory)
 from PIL import Image
 
+import aiassist
 import updater
 from jobs import JobManager
 from render.encoder import EXPORTS_DIR, UPLOADS_DIR
@@ -364,6 +365,57 @@ def api_upload_bg():
     name = "bg_{0}.png".format(uuid.uuid4().hex[:16])
     img.save(os.path.join(UPLOADS_DIR, name), format="PNG")
     return jsonify({"filename": name})
+
+
+@app.route("/api/ai/status")
+def api_ai_status():
+    return jsonify({"configured": aiassist.has_key(), "model": aiassist.MODEL})
+
+
+@app.route("/api/ai/key", methods=["POST"])
+def api_ai_key():
+    if request.content_length and request.content_length > MAX_JSON_BYTES:
+        return jsonify({"error": "Request too large."}), 413
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Body must be JSON."}), 400
+    try:
+        aiassist.save_key(data.get("key"))
+    except aiassist.AiError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/api/ai/generate", methods=["POST"])
+def api_ai_generate():
+    if request.content_length and request.content_length > MAX_JSON_BYTES:
+        return jsonify({"error": "Request too large."}), 413
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Body must be JSON."}), 400
+
+    description = data.get("description", "")
+    if not isinstance(description, str) or not description.strip():
+        return jsonify({"error": "Describe what entries you need."}), 400
+    if len(description) > 200:
+        return jsonify({"error": "Keep the description under 200 characters."}), 400
+
+    try:
+        count = int(data.get("count", 10))
+    except (TypeError, ValueError):
+        return jsonify({"error": "How many? must be a whole number."}), 400
+    if count < 1 or count > 20:
+        return jsonify({"error": "Choose between 1 and 20 entries."}), 400
+
+    existing = data.get("existing", [])
+    if not isinstance(existing, list):
+        existing = []
+
+    try:
+        entries = aiassist.generate_entries(description, count, existing)
+    except aiassist.AiError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"entries": entries})
 
 
 @app.route("/api/jobs/<job_id>")
