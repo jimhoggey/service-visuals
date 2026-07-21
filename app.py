@@ -16,7 +16,7 @@ import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.8.0"
+APP_VERSION = "1.9.0"
 GITHUB_REPO = "jimhoggey/service-visuals"
 
 import io
@@ -392,6 +392,16 @@ def api_ai_settings():
         return jsonify({"error": str(exc)}), 400
     return jsonify({"ok": True, "configured": aiassist.has_key(),
                     "model": aiassist.get_model()})
+
+
+@app.route("/api/ai/test", methods=["POST"])
+def api_ai_test():
+    """Validate the saved key + connectivity without spending a generation."""
+    try:
+        message = aiassist.test_key()
+    except aiassist.AiError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "message": message})
 
 
 @app.route("/api/ai/generate", methods=["POST"])

@@ -714,6 +714,9 @@
         aiConfigured = !!(j && j.configured);
         $("ai-key-section").hidden = aiConfigured;
         $("ai-gen-section").hidden = !aiConfigured;
+        // The key is never sent back to the browser, so the input is always
+        // blank. Say so, or an empty box looks like the key didn't save.
+        $("ai-key-state").hidden = !aiConfigured;
         populateModels((j && j.models) || [], (j && j.model) || "");
       })
       .catch(function () { /* offline — panel still opens to the key form */ });
@@ -786,6 +789,22 @@
         (aiConfigured ? $("ai-desc") : $("ai-key-input")).focus();
       });
     }
+  }
+
+  function testAiKey() {
+    setAiStatus("Testing key…");
+    $("ai-key-test").disabled = true;
+    fetch("/api/ai/test", { method: "POST" })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        $("ai-key-test").disabled = false;
+        if (!res.ok) { setAiStatus((res.j && res.j.error) || "The key test failed.", true); return; }
+        setAiStatus((res.j && res.j.message) || "Key works.");
+      })
+      .catch(function () {
+        $("ai-key-test").disabled = false;
+        setAiStatus("Could not reach the server.", true);
+      });
   }
 
   function saveAiKey() {
@@ -1435,9 +1454,12 @@
   $("ai-model-custom").addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); saveAiModel(); $("ai-desc").focus(); }
   });
+  $("ai-key-test").addEventListener("click", testAiKey);
+  $("ai-test-link").addEventListener("click", testAiKey);
   $("ai-change-key").addEventListener("click", function () {
     $("ai-key-section").hidden = false;
     $("ai-gen-section").hidden = true;
+    setAiStatus("");            // don't carry a stale error into this view
     $("ai-key-input").focus();
   });
   // Enter in the AI text fields must act, not submit the export form.

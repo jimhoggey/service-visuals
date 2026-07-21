@@ -33,6 +33,7 @@ PRESET_MODELS = [
     "openrouter/auto",
 ]
 ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+KEY_ENDPOINT = "https://openrouter.ai/api/v1/key"
 TIMEOUT = 90                    # free models can queue for a while
 MAX_ENTRIES = 100
 MAX_ENTRY_LEN = 40
@@ -114,6 +115,38 @@ def save_settings(key=None, model=None):
 
 
 # ---------------------------------------------------------------- generation
+
+def test_key():
+    """Check the stored key against OpenRouter WITHOUT running a generation.
+
+    Cheap and instant (no inference, no quota), so the UI can answer the two
+    questions that actually matter: is my key saved and accepted, and can this
+    machine reach OpenRouter at all? Returns a short status string."""
+    key = get_key()
+    if not key:
+        raise AiError("No key is saved yet — paste your OpenRouter key above.")
+
+    req = urllib.request.Request(KEY_ENDPOINT, headers={
+        "Authorization": "Bearer " + key,
+        "X-Title": "Service Visuals",
+    })
+    try:
+        with netutil.urlopen(req, timeout=20) as resp:
+            json.load(resp)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise AiError("OpenRouter rejected that key — paste it again.")
+        if exc.code == 402:
+            raise AiError("Key is valid, but the account is out of credit.")
+        raise AiError("OpenRouter returned an error ({0}).".format(exc.code))
+    except (socket.timeout, TimeoutError):
+        raise AiError("OpenRouter timed out — try again in a moment.")
+    except urllib.error.URLError:
+        raise AiError("Couldn't reach OpenRouter — check your connection.")
+    except ValueError:
+        raise AiError("OpenRouter sent back something unreadable.")
+    return "Key works — connected to OpenRouter."
+
 
 def _parse_entries(text):
     """Pull a clean list of short strings out of the model's reply, whether it

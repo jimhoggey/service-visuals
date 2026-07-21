@@ -910,6 +910,23 @@ canvas {
   line-height: 1.5;
   color: var(--ink-faint);
 }
+.ai-key-state {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--green);
+  border-radius: 4px;
+  background: rgba(63, 220, 123, 0.07);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+.ai-links {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-top: 10px;
+}
+.ai-links .ai-link { margin-top: 0; }
 .ai-full {
   display: flex;
   align-items: center;

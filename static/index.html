@@ -272,10 +272,14 @@
               <div class="ai-key-section" id="ai-key-section" hidden>
                 <p class="ai-note">Paste your own free OpenRouter API key. It's stored only on
                   this computer &#8212; get one at openrouter.ai/keys.</p>
+                <p class="ai-key-state" id="ai-key-state" hidden>&#10003; A key is already saved on this
+                  computer. It's never shown again, so this box stays empty &#8212; paste a new key
+                  only if you want to replace it.</p>
                 <div class="ai-row">
                   <input type="password" id="ai-key-input" placeholder="sk-or-&#8230;"
                     autocomplete="off" spellcheck="false">
                   <button type="button" class="btn" id="ai-key-save">SAVE KEY</button>
+                  <button type="button" class="btn" id="ai-key-test">TEST KEY</button>
                 </div>
               </div>
               <div class="ai-gen-section" id="ai-gen-section" hidden>
@@ -296,7 +300,10 @@
                   <input type="checkbox" id="ai-full">
                   <span>Full list &#8212; let the AI decide how many (e.g. all books of the Bible)</span>
                 </label>
-                <button type="button" class="ai-link" id="ai-change-key">Change API key</button>
+                <div class="ai-links">
+                  <button type="button" class="ai-link" id="ai-change-key">Change API key</button>
+                  <button type="button" class="ai-link" id="ai-test-link">Test key</button>
+                </div>
               </div>
               <p class="ai-status" id="ai-status" role="status" aria-live="polite"></p>
             </div>
