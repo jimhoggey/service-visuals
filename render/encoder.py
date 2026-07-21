@@ -139,9 +139,15 @@ class FrameEncoder:
             "-f", "mp4",          # .part suffix hides the extension
             self._tmp_path,
         ]
+        # On Windows the app is built --windowed (no console), so spawning
+        # ffmpeg normally flashes a console window for EVERY render. Suppress
+        # it the same way updater.py does for its helper script.
+        extra = {}
+        if sys.platform == "win32":
+            extra["creationflags"] = 0x08000000      # CREATE_NO_WINDOW
         self._proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-            stderr=self._stderr,
+            stderr=self._stderr, **extra
         )
 
     def add_frame(self, image):

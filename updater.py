@@ -107,29 +107,42 @@ def spawn_replacer(staged, install, workdir, pid=None):
     pid = os.getpid() if pid is None else pid
 
     if sys.platform == "win32":
+        # Wait by polling the PID with tasklist — NOT by trying to delete the
+        # exe. The old script used "del the exe until it succeeds" as its
+        # exit detector, which meant the app was already gone by the time the
+        # move ran: any failure there (antivirus lock, disk full) left the
+        # user with no app at all. Now the old exe is renamed aside, the new
+        # one moved in, and the backup removed only once that succeeded —
+        # restoring it otherwise. Same guarantee as the macOS branch below.
         # No parenthesized blocks: %n% inside ( ) would expand at parse time.
         # `ping` is the sleep that still works without a console window.
         script = os.path.join(workdir, "sv-update.bat")
+        backup = install + ".old"
         with open(script, "w") as f:
             f.write("\r\n".join([
                 "@echo off",
                 "set /a n=0",
                 ":wait",
-                'del /f "{install}" >nul 2>&1',
-                'if not exist "{install}" goto swap',
+                'tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul',
+                "if errorlevel 1 goto swap",
                 "set /a n+=1",
-                "if %n% geq 240 exit",
+                "if %n% geq 240 goto done",
                 "ping -n 2 127.0.0.1 >nul",
                 "goto wait",
                 ":swap",
-                'move /y "{staged}" "{install}"',
-                'if not exist "{install}" goto fail',
+                'del /f /q "{backup}" >nul 2>&1',
+                'move /y "{install}" "{backup}" >nul 2>&1',
+                'move /y "{staged}" "{install}" >nul 2>&1',
+                'if exist "{install}" goto ok',
+                'move /y "{backup}" "{install}" >nul 2>&1',
+                "goto done",
+                ":ok",
+                'del /f /q "{backup}" >nul 2>&1',
                 'start "" "{install}"',
+                ":done",
                 'del "%~f0"',
-                "exit",
-                ":fail",
-                'del "%~f0"',
-            ]).format(install=install, staged=staged) + "\r\n")
+            ]).format(pid=pid, install=install, staged=staged,
+                      backup=backup) + "\r\n")
         DETACHED_PROCESS = 0x00000008
         CREATE_NO_WINDOW = 0x08000000
         subprocess.Popen(["cmd", "/c", script], close_fds=True,

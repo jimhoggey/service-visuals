@@ -582,7 +582,9 @@ def api_reveal():
     if sys.platform == "darwin":
         subprocess.run(["open", "-R", path], check=False)
     elif sys.platform == "win32":
-        subprocess.run(["explorer", "/select,", path], check=False)
+        # Explorer needs "/select,<path>" as ONE argument — split across two it
+        # just opens a folder without highlighting the file.
+        subprocess.run(["explorer", "/select,{0}".format(path)], check=False)
     else:
         subprocess.run(["xdg-open", os.path.dirname(path)], check=False)
     return jsonify({"ok": True})
