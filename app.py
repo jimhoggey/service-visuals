@@ -16,7 +16,7 @@ import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.11.0"
+APP_VERSION = "1.12.0"
 GITHUB_REPO = "jimhoggey/service-visuals"
 
 import io
@@ -32,7 +32,8 @@ from jobs import JobManager
 from render.encoder import EXPORTS_DIR, UPLOADS_DIR
 from render.timer import render_timer
 from render.spinner import render_spinner
-from render.qr import POSITIONS, render_qr, render_qr_still
+from render.qr import (POSITIONS, render_qr, render_qr_image,
+                       render_qr_still)
 from render.motionbg import render_motion_bg
 
 # When frozen by PyInstaller the static files live under the unpack dir.
@@ -64,7 +65,7 @@ jobs = JobManager({"timer": render_timer, "spinner": render_spinner,
 
 # NB: matched with .fullmatch() — "$" alone would accept a trailing newline.
 HEX_COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")
-EXPORT_FILENAME_RE = re.compile(r"[A-Za-z0-9._-]+\.mp4")
+EXPORT_FILENAME_RE = re.compile(r"[A-Za-z0-9._-]+\.(mp4|png)")
 
 TIMER_STYLES = ("classic", "ring", "bar")
 SPINNER_MODES = ("random", "rigged")
@@ -346,6 +347,23 @@ def api_qr_preview():
     return send_file(buf, mimetype="image/png")
 
 
+@app.route("/api/qr-image", methods=["POST"])
+def api_qr_image():
+    """Export the QR card as a still PNG instead of a clip. Fast enough
+    (~0.2s) to do inline, so it skips the render queue and returns the
+    finished filename straight away."""
+    if request.content_length and request.content_length > MAX_JSON_BYTES:
+        return jsonify({"error": "Request too large."}), 413
+    options = request.get_json(silent=True)
+    if not isinstance(options, dict):
+        return jsonify({"error": "Body must be a JSON options object."}), 400
+    try:
+        clean = validate_qr_options(options)
+    except ValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"filename": render_qr_image(clean)})
+
+
 @app.route("/api/upload-bg", methods=["POST"])
 def api_upload_bg():
     """Accept a background image, re-encode it through Pillow (which strips
@@ -568,7 +586,7 @@ def api_reveal():
     filename = data.get("filename")
     if not isinstance(filename, str) or not EXPORT_FILENAME_RE.fullmatch(filename):
         return jsonify({"error": (
-            "That does not look like the name of an exported MP4.")}), 400
+            "That does not look like the name of an exported file.")}), 400
 
     exports_root = os.path.realpath(EXPORTS_DIR)
     path = os.path.realpath(os.path.join(exports_root, filename))

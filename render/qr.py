@@ -410,6 +410,21 @@ def render_qr_still(options, max_width=900):
     return frame
 
 
+def render_qr_image(options):
+    """Export the QR card as a single full-resolution PNG.
+
+    Nothing in this visual actually moves except the accent ring's slow
+    breathe, so a still image is usually the more sensible thing to drop into
+    ProPresenter (instant, tiny, no clip length to think about). Same 1920x1080
+    composition as the video, ring drawn at its peak.
+    Returns the filename basename."""
+    opts = _clean_options(options)
+    frame = render_qr_still(options, max_width=0)     # 0 = keep full 1920x1080
+    out_path = export_path("qr", opts["heading"] or "code", ext=".png")
+    frame.save(out_path, format="PNG")
+    return os.path.basename(out_path)
+
+
 def render_qr(options, progress_cb):
     """Render the QR "scan to..." card MP4. Returns the filename basename."""
     opts = _clean_options(options)

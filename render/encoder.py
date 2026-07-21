@@ -47,20 +47,21 @@ EXPORTS_DIR = _default_exports_dir()
 UPLOADS_DIR = os.path.join(tempfile.gettempdir(), "service-visuals-uploads")
 
 
-def export_path(prefix, descriptor):
+def export_path(prefix, descriptor, ext=".mp4"):
     """Build a unique, filesystem-safe path in exports/.
 
     e.g. export_path("timer", "5m00s_ring") ->
          .../exports/timer_5m00s_ring_20260704-103000.mp4
+    `ext` lets the QR card also export a still .png (nothing moves in it).
     """
     os.makedirs(EXPORTS_DIR, exist_ok=True)
     descriptor = re.sub(r"[^A-Za-z0-9_-]+", "-", descriptor).strip("-")[:60]
     stamp = time.strftime("%Y%m%d-%H%M%S")
     base = f"{prefix}_{descriptor}_{stamp}"
-    path = os.path.join(EXPORTS_DIR, base + ".mp4")
+    path = os.path.join(EXPORTS_DIR, base + ext)
     n = 2
     while os.path.exists(path):
-        path = os.path.join(EXPORTS_DIR, f"{base}_{n}.mp4")
+        path = os.path.join(EXPORTS_DIR, f"{base}_{n}{ext}")
         n += 1
     return path
 

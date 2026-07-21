@@ -962,6 +962,7 @@
   function updateQr() {
     var err = validateQr();
     $("qr-export").disabled = !!err;
+    $("qr-export-png").disabled = !!err;
     var hint = $("qr-url-hint");
     var urlErr = null;
     var url = $("qr-url").value.trim();
@@ -1498,6 +1499,36 @@
   $("qr-refresh").addEventListener("click", function () {
     if (qrPreviewTimer) clearTimeout(qrPreviewTimer);
     fetchQrPreview();
+  });
+
+  // PNG export: fast enough to be synchronous, so it skips the render queue
+  // and reuses the normal done panel (Download / Reveal / Make another).
+  $("qr-export-png").addEventListener("click", function () {
+    var err = validateQr();
+    if (err) { showError("qr", err); return; }
+    hideError("qr");
+    setFormDisabled("qr", true);
+    $("qr-done").hidden = true;
+    $("qr-progress").hidden = false;
+    setProgress("qr", 100);
+    setStatus("qr", "SAVING IMAGE…");
+    fetch("/api/qr-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(qrPayload().options)
+    })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.j.filename) {
+          failExport("qr", (res.j && res.j.error) || "Could not save the image.");
+          return;
+        }
+        setStatus("qr", "DONE");
+        finishExport("qr", res.j.filename);
+      })
+      .catch(function () {
+        failExport("qr", "Could not reach the server. Is it still running?");
+      });
   });
 
   // position 3x3 grid

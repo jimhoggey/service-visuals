@@ -498,7 +498,12 @@
             <p class="hint" id="qr-duration-hint">5 to 60 seconds</p>
           </fieldset>
 
-          <button class="btn-export" id="qr-export" type="submit">EXPORT MP4</button>
+          <div class="export-row">
+            <button class="btn-export" id="qr-export" type="submit">EXPORT MP4</button>
+            <button class="btn-export btn-export-alt" id="qr-export-png" type="button">EXPORT PNG</button>
+          </div>
+          <p class="hint">Nothing moves in this visual, so a PNG is usually the
+            simpler thing to drop into ProPresenter.</p>
         </fieldset>
 
         <div class="error-panel" id="qr-error" role="alert" hidden></div>

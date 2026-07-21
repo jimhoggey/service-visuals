@@ -310,6 +310,19 @@ button.tile:active { transform: translateY(0); }
 }
 .btn-export:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn-export:active:not(:disabled) { transform: translateY(1px); }
+
+/* QR exports two ways: the clip, or a still PNG (nothing moves in it). */
+.export-row { display: flex; gap: 10px; }
+.export-row .btn-export { flex: 1; }
+.btn-export-alt {
+  background: transparent;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn-export-alt:hover:not(:disabled) {
+  background: rgba(232, 180, 79, 0.14);
+  border-color: var(--accent);
+}
 .btn-export:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
 
 .chip {

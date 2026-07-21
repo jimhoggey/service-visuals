@@ -53,7 +53,9 @@ the new version, swaps itself out, and restarts. No manual reinstalling.
      optional heading and caption, accent colour, a 9-way on-screen position,
      and an optional background image. The preview shows the real, scannable
      code (hit **Refresh** to regenerate) — perfect for giving, connect cards
-     and signups.
+     and signups. Export it as a clip (**EXPORT MP4**) or, since nothing in it
+     moves, as a still **EXPORT PNG** — instant, and usually the simpler thing
+     to drop into ProPresenter.
    - **Motion background**: a seamlessly-looping ambient background in your
      accent colour — Aurora, Bokeh or Waves — for worship and ambient moments.
 2. Hit **Export**. The video renders locally.
