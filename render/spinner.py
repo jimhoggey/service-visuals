@@ -82,7 +82,7 @@ CARD_IN = 8.0
 CARD_FADE = 0.4
 
 MIN_ENTRIES = 2
-MAX_ENTRIES = 20
+MAX_ENTRIES = 100
 MAX_ENTRY_LEN = 40
 
 
@@ -108,7 +108,7 @@ def segment_colors(n):
     """A palette color per segment; adjacent segments (including the
     wrap-around last/first pair) never share a color. Repeats of the
     palette are offset (by 3 per cycle) with a nudge fix-up so the
-    guarantee holds for every n in 2..20."""
+    guarantee holds for every n in 2..MAX_ENTRIES."""
     m = len(PALETTE)
     idxs = []
     for i in range(n):

@@ -385,7 +385,7 @@
   function validateSpinner() {
     var entries = readEntries();
     if (entries.length < 2) return "The wheel needs at least 2 non-empty entries.";
-    if (entries.length > 20) return "The wheel supports at most 20 entries — you have " + entries.length + ".";
+    if (entries.length > 100) return "The wheel supports at most 100 entries — you have " + entries.length + ".";
     var tooLong = entries.filter(function (e) { return e.length > 40; });
     if (tooLong.length) return 'Each entry must be 40 characters or fewer — "' + tooLong[0].slice(0, 20) + '…" is too long.';
     if (spinnerMode() === "choose" && !$("spinner-winner").value) return "Pick a winner from the list.";
@@ -653,9 +653,9 @@
   function updateCountBadge(n) {
     var badge = $("spinner-count");
     var text = n === 1 ? "1 ENTRY" : n + " ENTRIES";
-    var warn = n < 2 || n > 20;
+    var warn = n < 2 || n > 100;
     if (n < 2) text += " — NEED 2+";
-    if (n > 20) text += " — MAX 20";
+    if (n > 100) text += " — MAX 100";
     badge.textContent = text;
     badge.classList.toggle("badge-warn", warn);
   }
@@ -699,9 +699,11 @@
   // ----------------------------------------------------- AI fill (spinner)
 
   var aiConfigured = false;
+  var AI_CUSTOM = "__custom__";
 
   // Show the key-entry section or the generate section based on whether a key
   // is stored on the server (never fetches the key itself — just a boolean).
+  // Also populates the model dropdown with the presets + current model.
   function refreshAiStatus() {
     return fetch("/api/ai/status", { cache: "no-store" })
       .then(function (r) { return r.json(); })
@@ -709,8 +711,59 @@
         aiConfigured = !!(j && j.configured);
         $("ai-key-section").hidden = aiConfigured;
         $("ai-gen-section").hidden = !aiConfigured;
+        populateModels((j && j.models) || [], (j && j.model) || "");
       })
       .catch(function () { /* offline — panel still opens to the key form */ });
+  }
+
+  function populateModels(models, current) {
+    var sel = $("ai-model");
+    while (sel.firstChild) sel.removeChild(sel.firstChild);
+    var known = false;
+    models.forEach(function (m) {
+      var opt = document.createElement("option");
+      opt.value = m; opt.textContent = m;
+      if (m === current) { opt.selected = true; known = true; }
+      sel.appendChild(opt);
+    });
+    var other = document.createElement("option");
+    other.value = AI_CUSTOM; other.textContent = "Other (custom)…";
+    sel.appendChild(other);
+    var custom = $("ai-model-custom");
+    if (current && !known) {
+      other.selected = true;
+      custom.value = current;
+      custom.hidden = false;
+    } else {
+      custom.hidden = true;
+    }
+    updateModelHint();
+  }
+
+  function currentModel() {
+    var v = $("ai-model").value;
+    if (v === AI_CUSTOM) return $("ai-model-custom").value.trim();
+    return v;
+  }
+
+  function updateModelHint() {
+    var m = currentModel();
+    var hint = $("ai-model-hint");
+    if (m === "openrouter/free")
+      hint.textContent = "openrouter/free auto-picks a working free model — most reliable.";
+    else
+      hint.textContent = "If this model is busy or offline, it falls back to openrouter/free.";
+  }
+
+  // Persist the chosen model so it sticks between sessions.
+  function saveAiModel() {
+    var model = currentModel();
+    if (!model) return;
+    fetch("/api/ai/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: model })
+    }).catch(function () { /* best effort; generate still sends the model */ });
   }
 
   function setAiStatus(msg, bad) {
@@ -736,7 +789,7 @@
     var key = $("ai-key-input").value.trim();
     if (!key) { setAiStatus("Paste your OpenRouter key first.", true); return; }
     setAiStatus("Saving…");
-    fetch("/api/ai/key", {
+    fetch("/api/ai/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key: key })
@@ -754,20 +807,26 @@
   function aiGenerate() {
     var desc = $("ai-desc").value.trim();
     if (!desc) { setAiStatus("Say what entries you need.", true); return; }
+    var full = $("ai-full").checked;
     var count = intFrom($("ai-count"));
-    if (count === null || count < 1 || count > 20) {
-      setAiStatus("How many? must be 1 to 20.", true); return;
+    if (!full && (count === null || count < 1 || count > 100)) {
+      setAiStatus("How many? must be 1 to 100.", true); return;
     }
+    if (count === null) count = 10;      // ignored in full mode, but keep valid
+    var model = currentModel();
+    if (!model) { setAiStatus("Enter a model name (or pick openrouter/free).", true); return; }
     var existing = readEntries();
-    var room = 20 - existing.length;
-    if (room <= 0) { setAiStatus("The wheel is already full (20 max).", true); return; }
+    var room = 100 - existing.length;
+    if (room <= 0) { setAiStatus("The wheel is already full (100 max).", true); return; }
 
     $("ai-generate").disabled = true;
-    setAiStatus("Asking the AI…");
+    setAiStatus(full
+      ? "Asking the AI for the full list… (can take a moment)"
+      : "Asking the AI… (free models can take a moment)");
     fetch("/api/ai/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description: desc, count: count, existing: existing })
+      body: JSON.stringify({ description: desc, count: count, existing: existing, model: model, full: full })
     })
       .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
       .then(function (res) {
@@ -780,7 +839,7 @@
         var added = 0;
         got.forEach(function (e) {
           var k = e.toLowerCase();
-          if (!seen[k] && existing.length < 20) { existing.push(e); seen[k] = true; added += 1; }
+          if (!seen[k] && existing.length < 100) { existing.push(e); seen[k] = true; added += 1; }
         });
         $("spinner-entries").value = existing.join("\n");
         cancelTestSpin();
@@ -1357,6 +1416,22 @@
   $("spinner-ai-toggle").addEventListener("click", toggleAiPanel);
   $("ai-key-save").addEventListener("click", saveAiKey);
   $("ai-generate").addEventListener("click", aiGenerate);
+  $("ai-model").addEventListener("change", function () {
+    var custom = (this.value === AI_CUSTOM);
+    $("ai-model-custom").hidden = !custom;
+    if (custom) { $("ai-model-custom").focus(); }
+    else { saveAiModel(); }
+    updateModelHint();
+  });
+  $("ai-full").addEventListener("change", function () {
+    // In full-list mode the AI decides the count, so grey the number out.
+    $("ai-count").disabled = this.checked;
+  });
+  $("ai-model-custom").addEventListener("input", updateModelHint);
+  $("ai-model-custom").addEventListener("change", saveAiModel);
+  $("ai-model-custom").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); saveAiModel(); $("ai-desc").focus(); }
+  });
   $("ai-change-key").addEventListener("click", function () {
     $("ai-key-section").hidden = false;
     $("ai-gen-section").hidden = true;

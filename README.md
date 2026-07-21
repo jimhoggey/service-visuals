@@ -36,12 +36,14 @@ the new version, swaps itself out, and restarts. No manual reinstalling.
    preview shows what you'll get before you spend any render time.
    - **Timer**: duration, three styles (Classic / Ring / Bar), accent colour,
      warn colour in the final 10 seconds, hold at 0:00.
-   - **Spinner**: one entry per line (2–20), Random or Choose-winner mode,
+   - **Spinner**: one entry per line (2–100), Random or Choose-winner mode,
      accent colour. Try **Test Spin** in the preview. **Fill with AI** can
      top up the wheel — type what you need (e.g. "books of the Bible", "world
-     capitals") and how many, and it adds them. Uses your own free
-     [OpenRouter](https://openrouter.ai/keys) key (GPT-OSS), pasted once and
-     stored only on your computer.
+     capitals") and either give an exact number or tick **Full list** to let
+     the AI return the complete set. Uses your own
+     [OpenRouter](https://openrouter.ai/keys) key, pasted once and stored only
+     on your computer; the model is selectable (defaults to `openrouter/free`,
+     which auto-picks a working free model).
    - **QR card**: a "scan to…" code from any website or plain text, with an
      optional heading and caption, accent colour, a 9-way on-screen position,
      and an optional background image. The preview shows the real, scannable

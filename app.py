@@ -16,7 +16,7 @@ import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.7.0"
 GITHUB_REPO = "jimhoggey/service-visuals"
 
 import io
@@ -167,9 +167,9 @@ def validate_spinner_options(options):
     if len(entries) < 2:
         raise ValidationError(
             "The wheel needs at least 2 non-empty entries.")
-    if len(entries) > 20:
+    if len(entries) > 100:
         raise ValidationError(
-            "The wheel supports at most 20 entries — you have {0}.".format(
+            "The wheel supports at most 100 entries — you have {0}.".format(
                 len(entries)))
 
     mode = options.get("mode", "random")
@@ -369,21 +369,28 @@ def api_upload_bg():
 
 @app.route("/api/ai/status")
 def api_ai_status():
-    return jsonify({"configured": aiassist.has_key(), "model": aiassist.MODEL})
+    return jsonify({
+        "configured": aiassist.has_key(),
+        "model": aiassist.get_model(),
+        "models": aiassist.PRESET_MODELS,
+    })
 
 
-@app.route("/api/ai/key", methods=["POST"])
-def api_ai_key():
+@app.route("/api/ai/settings", methods=["POST"])
+def api_ai_settings():
     if request.content_length and request.content_length > MAX_JSON_BYTES:
         return jsonify({"error": "Request too large."}), 413
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "Body must be JSON."}), 400
+    if "key" not in data and "model" not in data:
+        return jsonify({"error": "Nothing to save."}), 400
     try:
-        aiassist.save_key(data.get("key"))
+        aiassist.save_settings(key=data.get("key"), model=data.get("model"))
     except aiassist.AiError as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "configured": aiassist.has_key(),
+                    "model": aiassist.get_model()})
 
 
 @app.route("/api/ai/generate", methods=["POST"])
@@ -400,19 +407,25 @@ def api_ai_generate():
     if len(description) > 200:
         return jsonify({"error": "Keep the description under 200 characters."}), 400
 
+    full = bool(data.get("full"))
     try:
         count = int(data.get("count", 10))
     except (TypeError, ValueError):
         return jsonify({"error": "How many? must be a whole number."}), 400
-    if count < 1 or count > 20:
-        return jsonify({"error": "Choose between 1 and 20 entries."}), 400
+    if not full and (count < 1 or count > 100):
+        return jsonify({"error": "Choose between 1 and 100 entries."}), 400
 
     existing = data.get("existing", [])
     if not isinstance(existing, list):
         existing = []
 
+    model = data.get("model")
+    if model is not None and not isinstance(model, str):
+        model = None
+
     try:
-        entries = aiassist.generate_entries(description, count, existing)
+        entries = aiassist.generate_entries(
+            description, count, existing, model, full)
     except aiassist.AiError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"entries": entries})

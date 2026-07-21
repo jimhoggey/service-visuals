@@ -1,10 +1,16 @@
-"""AI entry generation for the spinner wheel, via OpenRouter's free GPT-OSS.
+"""AI entry generation for the spinner wheel, via OpenRouter.
 
-The user pastes their OWN free OpenRouter API key (openrouter.ai/keys). It is
+The user pastes their OWN OpenRouter API key (openrouter.ai/keys). It is
 stored locally in ~/.service-visuals/config.json (chmod 600) — never in the
 repo, never sent to the browser (the status endpoint returns only a boolean).
 The Flask server holds the key and calls OpenRouter server-side, so the key
 never leaves the machine except to OpenRouter itself.
+
+Model: defaults to `openrouter/free`, OpenRouter's router that picks whatever
+free model is currently up and supports the request — far more reliable than
+pinning one free model (any single one can be queued or offline). The user can
+choose a specific model (e.g. openai/gpt-oss-120b:free) instead. If a chosen
+model stalls or is unavailable, we fall back to openrouter/free automatically.
 
 No third-party dependency: the HTTP call uses urllib, like the update checker.
 """
@@ -12,15 +18,29 @@ No third-party dependency: the HTTP call uses urllib, like the update checker.
 import json
 import os
 import re
+import socket
 import urllib.error
 import urllib.request
 
-MODEL = "openai/gpt-oss-20b:free"
+DEFAULT_MODEL = "openrouter/free"
+# Suggestions offered in the UI dropdown (the user can also type a custom slug).
+PRESET_MODELS = [
+    "openrouter/free",
+    "openai/gpt-oss-120b:free",
+    "openai/gpt-oss-20b:free",
+    "openrouter/auto",
+]
 ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
-MAX_ENTRIES = 20
+TIMEOUT = 90                    # free models can queue for a while
+MAX_ENTRIES = 100
 MAX_ENTRY_LEN = 40
 
-CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".service-visuals")
+MODEL_RE = re.compile(r"[A-Za-z0-9._/:-]{1,80}")
+
+# Config location (holds the key + chosen model). Overridable via
+# SERVICE_VISUALS_CONFIG so it can be relocated or isolated for testing.
+CONFIG_DIR = os.environ.get("SERVICE_VISUALS_CONFIG") or \
+    os.path.join(os.path.expanduser("~"), ".service-visuals")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
 
@@ -28,7 +48,7 @@ class AiError(Exception):
     """Carries a plain-English message safe to show the user."""
 
 
-# ---------------------------------------------------------------- key storage
+# ---------------------------------------------------------------- config
 
 def _read_config():
     try:
@@ -37,6 +57,16 @@ def _read_config():
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def _write_config(config):
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f)
+    try:
+        os.chmod(CONFIG_PATH, 0o600)
+    except OSError:
+        pass
 
 
 def get_key():
@@ -52,21 +82,33 @@ def has_key():
     return bool(get_key())
 
 
-def save_key(key):
-    key = str(key or "").strip()
-    if not key:
-        raise AiError("Paste a valid OpenRouter API key.")
-    if len(key) > 300:
-        raise AiError("That key looks too long to be valid.")
-    os.makedirs(CONFIG_DIR, exist_ok=True)
+def _clean_model(model):
+    model = str(model or "").strip()
+    return model if MODEL_RE.fullmatch(model) else ""
+
+
+def get_model():
+    env = os.environ.get("OPENROUTER_MODEL", "").strip()
+    if env:
+        return _clean_model(env) or DEFAULT_MODEL
+    return _clean_model(_read_config().get("openrouter_model", "")) or DEFAULT_MODEL
+
+
+def save_settings(key=None, model=None):
+    """Update the stored key and/or model. Only non-None fields are touched."""
     config = _read_config()
-    config["openrouter_key"] = key
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(config, f)
-    try:
-        os.chmod(CONFIG_PATH, 0o600)
-    except OSError:
-        pass
+    if key is not None:
+        key = str(key).strip()
+        if key:
+            if len(key) > 300:
+                raise AiError("That key looks too long to be valid.")
+            config["openrouter_key"] = key
+    if model is not None:
+        clean = _clean_model(model)
+        if not clean:
+            raise AiError("Choose a valid model name.")
+        config["openrouter_model"] = clean
+    _write_config(config)
 
 
 # ---------------------------------------------------------------- generation
@@ -101,39 +143,24 @@ def _parse_entries(text):
     return clean
 
 
-def generate_entries(description, count, existing):
-    """Ask GPT-OSS for `count` spinner entries matching `description`, avoiding
-    anything already in `existing`. Returns a list of clean strings.
+class _Retry(Exception):
+    """Internal: the current model failed in a way worth retrying on the
+    fallback router. Carries the user-facing message to use if the retry
+    also fails."""
+    def __init__(self, message):
+        super().__init__(message)
+        self.message = message
 
-    Raises AiError with a friendly message on any failure."""
-    key = get_key()
-    if not key:
-        raise AiError("Add your free OpenRouter API key first (in the AI panel).")
 
-    count = max(1, min(MAX_ENTRIES, int(count)))
-    existing = [str(e).strip() for e in (existing or []) if str(e).strip()]
-    avoid = ", ".join(existing[:40]) if existing else "(none)"
-
-    system = (
-        "You generate entries for a spinner/wheel picker. "
-        "Return ONLY a JSON array of short strings — no prose, no numbering, "
-        "no markdown. Each entry is at most 40 characters. No duplicates."
-    )
-    user = (
-        "Give me exactly {n} entries for: {desc}.\n"
-        "Do not repeat any of these existing entries: {avoid}."
-    ).format(n=count, desc=str(description).strip(), avoid=avoid)
-
+def _chat(key, model, messages):
+    """One OpenRouter call. Returns the assistant content string. Raises
+    AiError (fatal) or _Retry (try the fallback model)."""
     body = json.dumps({
-        "model": MODEL,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
+        "model": model,
+        "messages": messages,
         "temperature": 0.8,
         "max_tokens": 800,
     }).encode("utf-8")
-
     req = urllib.request.Request(
         ENDPOINT, data=body, method="POST",
         headers={
@@ -142,35 +169,92 @@ def generate_entries(description, count, existing):
             "X-Title": "Service Visuals",
             "HTTP-Referer": "https://github.com/jimhoggey/service-visuals",
         })
-
     try:
-        with urllib.request.urlopen(req, timeout=45) as resp:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             data = json.load(resp)
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
-            raise AiError(
-                "OpenRouter rejected the key — check it in the AI panel.")
+            raise AiError("OpenRouter rejected the key — check it in the AI panel.")
         if exc.code == 402:
-            raise AiError(
-                "That OpenRouter account is out of free credit for this model.")
+            raise AiError("That OpenRouter account is out of credit for this model.")
+        if exc.code in (400, 404):
+            raise _Retry("The model \"{0}\" isn't available right now.".format(model))
         if exc.code == 429:
-            raise AiError("OpenRouter is busy right now — try again in a moment.")
-        raise AiError("OpenRouter returned an error ({0}).".format(exc.code))
-    except (urllib.error.URLError, TimeoutError):
+            raise _Retry("OpenRouter is rate-limited right now.")
+        raise _Retry("OpenRouter returned an error ({0}).".format(exc.code))
+    except (socket.timeout, TimeoutError):
+        raise _Retry(
+            "The model took too long — free models can be busy. "
+            "Try again, or use openrouter/free.")
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", "")
+        if isinstance(reason, (socket.timeout, TimeoutError)):
+            raise _Retry("The model took too long — free models can be busy.")
         raise AiError("Couldn't reach OpenRouter — check your connection.")
     except ValueError:
-        raise AiError("OpenRouter sent back something unreadable.")
+        raise _Retry("OpenRouter sent back something unreadable.")
 
     try:
-        content = data["choices"][0]["message"]["content"]
+        return data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
-        raise AiError("The AI didn't return any entries — try again.")
+        raise _Retry("The AI didn't return any entries.")
 
-    entries = _parse_entries(content)
-    # Drop anything the user already has, so the AI genuinely adds to the wheel.
+
+def generate_entries(description, count, existing, model=None, full=False):
+    """Ask the chosen model for spinner entries matching `description`,
+    avoiding anything in `existing`. When `full` is True, return the complete
+    natural set (e.g. every book of the Bible) up to MAX_ENTRIES; otherwise
+    return exactly `count`. Falls back to openrouter/free if the chosen model
+    stalls or is unavailable. Raises AiError with a friendly message on failure."""
+    key = get_key()
+    if not key:
+        raise AiError("Add your free OpenRouter API key first (in the AI panel).")
+
+    count = max(1, min(MAX_ENTRIES, int(count)))
+    existing = [str(e).strip() for e in (existing or []) if str(e).strip()]
+    avoid = ", ".join(existing[:60]) if existing else "(none)"
+
+    chosen = _clean_model(model) or get_model()
+    # Try the chosen model, then the router (unless it IS the router).
+    chain = [chosen] if chosen == DEFAULT_MODEL else [chosen, DEFAULT_MODEL]
+
+    if full:
+        cap = MAX_ENTRIES
+        ask = (
+            "List the COMPLETE set for: {desc}.\n"
+            "If it's a well-known finite set (e.g. books of the Bible, months "
+            "of the year, countries in a region), return every item in the "
+            "natural order — do not stop short and do not pad. Otherwise return "
+            "a good variety. Return at most {cap} items."
+        ).format(desc=str(description).strip(), cap=MAX_ENTRIES)
+    else:
+        cap = count
+        ask = (
+            "Give me exactly {n} entries for: {desc}."
+        ).format(n=count, desc=str(description).strip())
+
+    messages = [
+        {"role": "system", "content": (
+            "You generate entries for a spinner/wheel picker. "
+            "Return ONLY a JSON array of short strings — no prose, no numbering, "
+            "no markdown. Each entry is at most 40 characters. No duplicates.")},
+        {"role": "user", "content": (
+            ask + "\nDo not repeat any of these existing entries: {avoid}."
+        ).format(avoid=avoid)},
+    ]
+
     have = {e.lower() for e in existing}
-    entries = [e for e in entries if e.lower() not in have]
-    if not entries:
-        raise AiError(
-            "The AI didn't return a usable list — try rewording the request.")
-    return entries[:count]
+    last_message = "The AI didn't return a usable list — try rewording."
+    for attempt_model in chain:
+        try:
+            content = _chat(key, attempt_model, messages)
+        except _Retry as retry:
+            last_message = retry.message
+            continue                     # try the fallback model
+        entries = _parse_entries(content)
+        entries = [e for e in entries if e.lower() not in have]
+        if entries:
+            return entries[:cap]
+        last_message = "The AI didn't return a usable list — try rewording."
+
+    raise AiError(last_message)

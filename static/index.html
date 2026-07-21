@@ -264,7 +264,7 @@
             <textarea id="spinner-entries" rows="8" spellcheck="false"
               placeholder="Alice&#10;Bob&#10;Carmen&#10;Dan"></textarea>
             <div class="entries-foot">
-              <p class="hint">2 to 20 entries, up to 40 characters each</p>
+              <p class="hint">2 to 100 entries, up to 40 characters each</p>
               <button type="button" class="btn-ai" id="spinner-ai-toggle" aria-expanded="false">&#10022; FILL WITH AI</button>
             </div>
 
@@ -279,12 +279,23 @@
                 </div>
               </div>
               <div class="ai-gen-section" id="ai-gen-section" hidden>
+                <div class="ai-model-row">
+                  <label for="ai-model">MODEL</label>
+                  <select id="ai-model"></select>
+                </div>
+                <input type="text" id="ai-model-custom" spellcheck="false" autocomplete="off"
+                  placeholder="custom model slug, e.g. openai/gpt-oss-120b:free" hidden>
+                <p class="ai-model-hint" id="ai-model-hint">openrouter/free auto-picks a working free model — most reliable.</p>
                 <div class="ai-row">
                   <input type="text" id="ai-desc" spellcheck="false"
                     placeholder="What entries? e.g. books of the Bible, world capitals">
-                  <input type="number" id="ai-count" min="1" max="20" value="10" aria-label="How many entries">
+                  <input type="number" id="ai-count" min="1" max="100" value="10" aria-label="How many entries">
                   <button type="button" class="btn btn-accent" id="ai-generate">GENERATE</button>
                 </div>
+                <label class="ai-full">
+                  <input type="checkbox" id="ai-full">
+                  <span>Full list &#8212; let the AI decide how many (e.g. all books of the Bible)</span>
+                </label>
                 <button type="button" class="ai-link" id="ai-change-key">Change API key</button>
               </div>
               <p class="ai-status" id="ai-status" role="status" aria-live="polite"></p>
