@@ -13,9 +13,14 @@ machine.
 Grab the latest build from the
 [**Releases page**](https://github.com/jimhoggey/service-visuals/releases):
 
-**Mac** — download `ServiceVisuals-mac.zip`, unzip, drag **Service Visuals**
-into your **Applications** folder, and open it from Launchpad or Spotlight.
+**Mac** — download `ServiceVisuals-mac.zip`, unzip, then **drag Service Visuals
+into your Applications folder** and open it from there (Launchpad or Spotlight).
 First open only: the app is unsigned, so right-click it → **Open** → **Open**.
+
+> Moving it to Applications isn't optional housekeeping. If you run it straight
+> from Downloads, macOS launches a temporary read-only copy of it
+> ("App Translocation") and the app cannot update itself — it will tell you so
+> rather than pretending to update.
 
 **Windows** — download `ServiceVisuals-windows.zip`, unzip, and put
 **Service Visuals.exe** wherever you like (e.g. your Desktop). To get it in

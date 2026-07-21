@@ -16,7 +16,7 @@ import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.10.0"
+APP_VERSION = "1.11.0"
 GITHUB_REPO = "jimhoggey/service-visuals"
 
 import io
@@ -531,10 +531,11 @@ def _do_install(url):
 
 @app.route("/api/update-install", methods=["POST"])
 def api_update_install():
-    if not getattr(sys, "frozen", False):
-        return jsonify({"error": (
-            "Self-update only works in the packaged app. "
-            "Running from source? Use git pull.")}), 400
+    problem = updater.install_problem()
+    if problem:
+        # e.g. macOS App Translocation — replacing the running copy would be a
+        # no-op, so say so rather than "restarting" into the same old version.
+        return jsonify({"error": problem}), 400
     if not _update["available"]:
         return jsonify({"error": "No update available."}), 404
     asset = updater.platform_asset(_update.get("assets"))

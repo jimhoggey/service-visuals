@@ -141,7 +141,11 @@
       .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
       .then(function (res) {
         if (!res.ok) {
-          $("update-text").textContent = ((res.body && res.body.error) || "Update failed.").toUpperCase();
+          // The reason can be a full sentence (e.g. "move it to Applications"),
+          // which won't fit the pill — keep the pill short and put the detail
+          // in the footer note where there's room to read it.
+          $("update-text").textContent = "UPDATE NEEDS ACTION";
+          $("update-note").textContent = (res.body && res.body.error) || "Update failed.";
           $("update-get").disabled = false;
           return;
         }

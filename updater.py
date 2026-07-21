@@ -47,6 +47,32 @@ def install_root():
     return sys.executable
 
 
+def install_problem():
+    """Return a plain-English reason self-update cannot work here, or None.
+
+    macOS runs a freshly-downloaded (quarantined) app from a randomized
+    READ-ONLY copy under .../AppTranslocation/ until the user moves it in
+    Finder. In that state sys.executable points at a throwaway copy, so the
+    swap below would replace the copy and leave the real app untouched — the
+    update would look like it worked and change nothing. Detect it and tell
+    the user what to do instead of silently doing nothing.
+    """
+    if not getattr(sys, "frozen", False):
+        return ("Self-update only works in the packaged app. "
+                "Running from source? Use git pull.")
+    root = install_root()
+    if "/AppTranslocation/" in root:
+        return ("macOS is running Service Visuals from a temporary read-only "
+                "copy, so it can't replace itself. Drag Service Visuals into "
+                "your Applications folder, open it from there, then update.")
+    parent = os.path.dirname(root) or "/"
+    if not os.access(parent, os.W_OK):
+        return ("Service Visuals can't update itself from this folder "
+                "(no permission to write there). Move it to your Applications "
+                "folder and try again.")
+    return None
+
+
 def download(url, dest, progress_cb):
     req = urllib.request.Request(url, headers={"User-Agent": "service-visuals"})
     with netutil.urlopen(req, timeout=30) as resp, open(dest, "wb") as out:
@@ -97,7 +123,11 @@ def spawn_replacer(staged, install, workdir, pid=None):
                 "goto wait",
                 ":swap",
                 'move /y "{staged}" "{install}"',
+                'if not exist "{install}" goto fail',
                 'start "" "{install}"',
+                'del "%~f0"',
+                "exit",
+                ":fail",
                 'del "%~f0"',
             ]).format(install=install, staged=staged) + "\r\n")
         DETACHED_PROCESS = 0x00000008
@@ -110,6 +140,9 @@ def spawn_replacer(staged, install, workdir, pid=None):
     q_staged = shlex.quote(staged)
     relaunch = ("" if os.environ.get("SERVICE_VISUALS_NO_RELAUNCH")
                 else "open {0}".format(q_install))
+    # Swap safely: move the old app aside, put the new one in place, and only
+    # then delete the backup. If the move fails we restore, so a failed update
+    # can never leave the user with no app at all.
     script = os.path.join(workdir, "sv-update.sh")
     with open(script, "w") as f:
         f.write("\n".join([
@@ -119,8 +152,15 @@ def spawn_replacer(staged, install, workdir, pid=None):
             "  sleep 0.5",
             '  n=$((n+1)); [ "$n" -gt 240 ] && exit 1',
             "done",
-            "rm -rf {q_install}",
-            "mv {q_staged} {q_install}",
+            'backup={q_install}.old-$$',
+            "rm -rf \"$backup\"",
+            'if mv {q_install} "$backup"; then',
+            "  if mv {q_staged} {q_install}; then",
+            '    rm -rf "$backup"',
+            "  else",
+            '    mv "$backup" {q_install}',
+            "  fi",
+            "fi",
             relaunch,
             'rm -f "$0"',
         ]).format(pid=pid, q_install=q_install, q_staged=q_staged) + "\n")
