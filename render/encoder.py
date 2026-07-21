@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import imageio_ffmpeg
 
@@ -64,6 +65,37 @@ def export_path(prefix, descriptor):
     return path
 
 
+def encode_parallel(out_path, input_fps, total_frames, make_frame,
+                    progress_cb=None, output_fps=OUTPUT_FPS):
+    """Generate frames on a thread pool and write them to ffmpeg IN ORDER.
+
+    Pillow releases the GIL inside its C image routines, so threads give real
+    parallelism here (~4x on a 8-core machine) without the process-spawning
+    hazards that multiprocessing brings to a PyInstaller bundle (especially
+    Windows --onefile, where each child would re-extract the whole app).
+
+    make_frame(k) must only READ shared images and return a fresh frame, so
+    frames can be built concurrently. Work is done in small batches so at most
+    ~2 frames per worker are ever in memory (a 1080p RGB frame is ~6 MB).
+    """
+    workers = max(1, min(6, (os.cpu_count() or 2) - 1))
+    with FrameEncoder(out_path, input_fps, output_fps=output_fps) as enc:
+        if workers == 1:
+            for k in range(total_frames):
+                enc.add_frame(make_frame(k))
+                if progress_cb:
+                    progress_cb(int((k + 1) * 100.0 / total_frames))
+            return
+        batch = workers * 2
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for start in range(0, total_frames, batch):
+                idx = range(start, min(start + batch, total_frames))
+                for k, frame in zip(idx, pool.map(make_frame, idx)):
+                    enc.add_frame(frame)
+                    if progress_cb:
+                        progress_cb(int((k + 1) * 100.0 / total_frames))
+
+
 class EncoderError(RuntimeError):
     pass
 
@@ -76,7 +108,8 @@ class FrameEncoder:
             enc.add_frame(pil_image)   # 1920x1080, mode RGB
     """
 
-    def __init__(self, out_path, input_fps, width=WIDTH, height=HEIGHT):
+    def __init__(self, out_path, input_fps, width=WIDTH, height=HEIGHT,
+                 output_fps=OUTPUT_FPS):
         self.out_path = out_path
         # Encode to a temporary *.part name and os.replace() it into place
         # only on success, so a killed process (Ctrl+C mid-render) can never
@@ -99,7 +132,7 @@ class FrameEncoder:
             "-an",
             "-vcodec", "libx264",
             "-pix_fmt", "yuv420p",
-            "-r", str(OUTPUT_FPS),
+            "-r", str(output_fps),
             "-preset", "veryfast",
             "-crf", "19",
             "-movflags", "+faststart",

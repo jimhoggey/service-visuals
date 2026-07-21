@@ -31,6 +31,8 @@ from PIL import Image, ImageDraw
 from . import fonts
 from .encoder import FrameEncoder, WIDTH, HEIGHT, export_path
 
+TIMER_OUTPUT_FPS = 15   # see the FrameEncoder call in render_timer()
+
 # ---- shared visual language -------------------------------------------------
 BG_BASE = (14, 16, 19)           # #0e1013
 BG_EDGE = (7, 8, 10)             # #07080a  (vignette edges)
@@ -302,7 +304,11 @@ def render_timer(options, progress_cb):
     cached_key = None      # (text, color) of the base currently cached
     cached_base = None     # background + digits for that second
     last_pct = -1
-    with FrameEncoder(out_path, input_fps=fps) as enc:
+    # A countdown's content changes once a second (classic) or creeps smoothly
+    # (ring/bar), so encoding 30 fps is pure waste — a 5-minute timer meant
+    # 9000 encoded frames, ~64% of the render time. 15 fps looks identical for
+    # this content and halves the encode.
+    with FrameEncoder(out_path, input_fps=fps, output_fps=TIMER_OUTPUT_FPS) as enc:
         for i in range(total_frames):
             t = i / float(fps)
             elapsed = int(t)

@@ -352,33 +352,48 @@ def _compose_base(opts):
     return base.convert("RGB"), geo
 
 
-def _build_ring(geo, phase, accent):
-    """RGBA full-frame overlay: a single soft accent ring outside the card,
-    opacity/width periodic in phase (frame 0 == frame N)."""
-    s = 0.5 * (1.0 + math.sin(phase))
+# The ring only ever occupies a thin band around the card, and its appearance
+# depends solely on s = 0.5*(1+sin(phase)). Building a full 3840x2160 overlay
+# every frame cost ~86 ms/frame — nearly the entire render. Instead we draw a
+# small tile around the card and cache it per quantised s: at RING_STEPS levels
+# the alpha moves ~1.7/255 and the width ~0.08 px per step, so the breathe is
+# still smooth but a clip needs at most RING_STEPS tiles instead of one per frame.
+RING_STEPS = 64
+RING_PAD = RING_GAP + int(math.ceil(RING_BASE_W + RING_SWING_W)) + 2
+
+
+def _ring_tile(card_size, step, accent):
+    """RGBA tile of the ring for a quantised breathe `step`. Paste it at
+    (card_left - RING_PAD, card_top - RING_PAD)."""
+    s = step / float(RING_STEPS - 1)
     alpha = int(round(RING_MIN_A + (RING_MAX_A - RING_MIN_A) * s))
     width = RING_BASE_W + RING_SWING_W * s
 
-    overlay = Image.new("RGBA", (WIDTH * RING_SS, HEIGHT * RING_SS),
-                        (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
+    box = card_size + 2 * RING_PAD
+    tile = Image.new("RGBA", (box * RING_SS, box * RING_SS), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(tile)
 
-    cs = geo["card_size"]
-    cx = geo["card_cx"]
-    left = (cx - cs // 2 - RING_GAP) * RING_SS
-    top = (geo["card_top"] - RING_GAP) * RING_SS
-    right = (cx + cs // 2 + RING_GAP) * RING_SS
-    bottom = (geo["card_top"] + cs + RING_GAP) * RING_SS
-    radius = (CARD_RADIUS + RING_GAP) * RING_SS
-
+    inset = (RING_PAD - RING_GAP) * RING_SS
+    far = (box - (RING_PAD - RING_GAP)) * RING_SS - 1
     draw.rounded_rectangle(
-        [left, top, right, bottom], radius=radius,
+        [inset, inset, far, far], radius=(CARD_RADIUS + RING_GAP) * RING_SS,
         outline=_hex_rgb(accent) + (alpha,),
         width=max(1, int(round(width * RING_SS))))
-    return overlay.resize((WIDTH, HEIGHT), _LANCZOS)
+    return tile.resize((box, box), _LANCZOS)
+
+
+def _ring_step(phase):
+    """Quantise the breathe so tiles can be cached."""
+    s = 0.5 * (1.0 + math.sin(phase))
+    return min(RING_STEPS - 1, max(0, int(round(s * (RING_STEPS - 1)))))
 
 
 # ---------------------------------------------------------------- renderer
+
+def _ring_pos(geo):
+    return (geo["card_cx"] - geo["card_size"] // 2 - RING_PAD,
+            geo["card_top"] - RING_PAD)
+
 
 def render_qr_still(options, max_width=900):
     """Render ONE representative frame (base + ring near peak) as an RGB PIL
@@ -386,9 +401,9 @@ def render_qr_still(options, max_width=900):
     preview shows the exact, scannable QR that will be exported."""
     opts = _clean_options(options)
     base_rgb, geo = _compose_base(opts)
-    ring = _build_ring(geo, math.pi / 2.0, opts["accent"])   # peak brightness
+    tile = _ring_tile(geo["card_size"], RING_STEPS - 1, opts["accent"])
     frame = base_rgb.copy()
-    frame.paste(ring, (0, 0), ring)
+    frame.paste(tile, _ring_pos(geo), tile)
     if max_width and max_width < WIDTH:
         h = int(HEIGHT * max_width / WIDTH)
         frame = frame.resize((max_width, h), _LANCZOS)
@@ -401,13 +416,20 @@ def render_qr(options, progress_cb):
     base_rgb, geo = _compose_base(opts)
 
     total_frames = opts["duration"] * INPUT_FPS
+    pos = _ring_pos(geo)
+    tiles = {}                       # quantised step -> ring tile
     out_path = export_path("qr", opts["heading"] or "code")
-    with FrameEncoder(out_path, INPUT_FPS) as enc:
+    # Only the ring breathes, so 1:1 input->output (15 fps) avoids
+    # encoding 2x the frames for no visible gain.
+    with FrameEncoder(out_path, INPUT_FPS, output_fps=INPUT_FPS) as enc:
         for k in range(total_frames):
-            phase = 2.0 * math.pi * k / total_frames
-            ring = _build_ring(geo, phase, opts["accent"])
+            step = _ring_step(2.0 * math.pi * k / total_frames)
+            tile = tiles.get(step)
+            if tile is None:
+                tile = tiles[step] = _ring_tile(
+                    geo["card_size"], step, opts["accent"])
             frame = base_rgb.copy()
-            frame.paste(ring, (0, 0), ring)
+            frame.paste(tile, pos, tile)
             enc.add_frame(frame)
             progress_cb(int((k + 1) * 100.0 / total_frames))
     return os.path.basename(out_path)
