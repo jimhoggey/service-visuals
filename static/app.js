@@ -117,6 +117,9 @@
           $("update-pill").hidden = false;
           $("update-dismiss").hidden = false;
           if (manual) $("update-note").textContent = j.latest + " is available.";
+        } else if (j && j.check_failed) {
+          // Don't claim "up to date" when we never actually reached GitHub.
+          if (manual) $("update-note").textContent = "Couldn't check — no connection to GitHub.";
         } else if (manual) {
           $("update-note").textContent = "You're up to date.";
         }

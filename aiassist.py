@@ -22,6 +22,8 @@ import socket
 import urllib.error
 import urllib.request
 
+import netutil
+
 DEFAULT_MODEL = "openrouter/free"
 # Suggestions offered in the UI dropdown (the user can also type a custom slug).
 PRESET_MODELS = [
@@ -170,7 +172,7 @@ def _chat(key, model, messages):
             "HTTP-Referer": "https://github.com/jimhoggey/service-visuals",
         })
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with netutil.urlopen(req, timeout=TIMEOUT) as resp:
             data = json.load(resp)
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):

@@ -15,6 +15,8 @@ import sys
 import urllib.request
 import zipfile
 
+import netutil
+
 ASSET_NAMES = {
     "darwin": "ServiceVisuals-mac.zip",
     "win32": "ServiceVisuals-windows.zip",
@@ -47,7 +49,7 @@ def install_root():
 
 def download(url, dest, progress_cb):
     req = urllib.request.Request(url, headers={"User-Agent": "service-visuals"})
-    with urllib.request.urlopen(req, timeout=30) as resp, open(dest, "wb") as out:
+    with netutil.urlopen(req, timeout=30) as resp, open(dest, "wb") as out:
         total = int(resp.headers.get("Content-Length") or 0)
         got = 0
         while True:

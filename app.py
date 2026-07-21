@@ -16,7 +16,7 @@ import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.8.0"
 GITHUB_REPO = "jimhoggey/service-visuals"
 
 import io
@@ -26,6 +26,7 @@ from flask import (Flask, jsonify, request, send_file, send_from_directory)
 from PIL import Image
 
 import aiassist
+import netutil
 import updater
 from jobs import JobManager
 from render.encoder import EXPORTS_DIR, UPLOADS_DIR
@@ -446,7 +447,8 @@ def download_export(filename):
 
 # One GitHub query per app run; failures (offline, rate limit) stay silent —
 # an update nag must never get in the way of a Sunday morning.
-_update = {"checked": False, "available": False, "latest": None, "url": None}
+_update = {"checked": False, "available": False, "latest": None, "url": None,
+           "error": None}
 
 
 def _version_tuple(tag):
@@ -461,23 +463,27 @@ def api_update_check():
         _update["checked"] = False
     if not _update["checked"]:
         _update["checked"] = True
+        _update["error"] = None
         try:
             req = urllib.request.Request(
                 "https://api.github.com/repos/%s/releases/latest" % GITHUB_REPO,
                 headers={"Accept": "application/vnd.github+json",
                          "User-Agent": "service-visuals"})
-            with urllib.request.urlopen(req, timeout=4) as resp:
+            with netutil.urlopen(req, timeout=10) as resp:
                 data = json.load(resp)
             tag = data.get("tag_name") or ""
             if _version_tuple(tag) > _version_tuple(APP_VERSION):
                 _update.update(available=True, latest=tag,
                                url=data.get("html_url"),
                                assets=data.get("assets") or [])
-        except Exception:
-            pass
+        except Exception as exc:
+            # A failed check must NOT look like "you're up to date" — record it
+            # so the UI can say the check itself didn't work.
+            _update["error"] = exc.__class__.__name__
     return jsonify({"current": "v" + APP_VERSION,
                     "latest": _update["latest"],
                     "update_available": _update["available"],
+                    "check_failed": bool(_update.get("error")),
                     "can_self_install": bool(getattr(sys, "frozen", False))})
 
 

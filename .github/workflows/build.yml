@@ -25,6 +25,7 @@ jobs:
           --collect-all imageio_ffmpeg
           --collect-all webview
           --collect-all segno
+          --collect-all certifi
           desktop.py
       - name: Zip .app
         run: cd dist && ditto -c -k --keepParent "Service Visuals.app" ServiceVisuals-mac.zip
@@ -54,6 +55,7 @@ jobs:
           --collect-all imageio_ffmpeg
           --collect-all webview
           --collect-all segno
+          --collect-all certifi
           desktop.py
       - name: Zip .exe
         run: Compress-Archive -Path "dist/Service Visuals.exe" -DestinationPath dist/ServiceVisuals-windows.zip
