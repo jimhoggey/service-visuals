@@ -358,6 +358,30 @@
             </div>
           </fieldset>
 
+          <fieldset class="group">
+            <legend>Timing</legend>
+            <div class="tl-bar" id="spinner-tl" aria-hidden="true">
+              <div class="tl-seg tl-wait" id="tl-wait" hidden><span>WAIT</span></div>
+              <div class="tl-seg tl-spin" id="tl-spin"><span>SPIN</span></div>
+              <div class="tl-seg tl-winner" id="tl-winner"><span>WINNER</span></div>
+            </div>
+            <div class="duration-row">
+              <div class="num-field">
+                <label for="spinner-wait">WAIT</label>
+                <input type="number" id="spinner-wait" inputmode="numeric" min="0" max="60" step="1" value="0">
+              </div>
+              <div class="num-field">
+                <label for="spinner-spin">SPIN</label>
+                <input type="number" id="spinner-spin" inputmode="numeric" min="2" max="30" step="1" value="7">
+              </div>
+              <div class="num-field">
+                <label for="spinner-winner-secs">WINNER</label>
+                <input type="number" id="spinner-winner-secs" inputmode="numeric" min="1" max="30" step="1" value="4">
+              </div>
+            </div>
+            <p class="hint" id="spinner-timing-hint">All in seconds. Total video: 11.8s</p>
+          </fieldset>
+
           <button class="btn-export" id="spinner-export" type="submit">EXPORT MP4</button>
         </fieldset>
 

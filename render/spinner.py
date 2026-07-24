@@ -71,15 +71,21 @@ LABEL_MAX_PX = 46                        # font-size cap at 1x
 CARD_CENTER_Y = 880
 
 # ---------------------------------------------------------------- timeline
+# The three phases are user-editable (all in whole seconds):
+#   wait   — wheel sits still before anything moves (builds anticipation)
+#   spin   — wind-up (fixed 0.8s) + the cubic ease-out spin itself
+#   winner — how long the winner card stays up at the end
+# Defaults reproduce the original fixed 12s-ish clip: 0 + (0.8+7) + 4 = 11.8s.
 
-DURATION = 12.0
-TOTAL_FRAMES = int(DURATION * OUTPUT_FPS)         # 360
-WINDUP_END = 0.8
-SPIN_END = 7.8
+WINDUP_LEN = 0.8
 WINDUP_DEG = -25.0
 FULL_SPINS = 5
-CARD_IN = 8.0
 CARD_FADE = 0.4
+CARD_DELAY = 0.2          # gap between the wheel settling and the card fading in
+
+WAIT_DEFAULT, WAIT_MIN, WAIT_MAX = 0, 0, 60
+SPIN_DEFAULT, SPIN_MIN, SPIN_MAX = 7, 2, 30
+WINNER_DEFAULT, WINNER_MIN, WINNER_MAX = 4, 1, 30
 
 MIN_ENTRIES = 2
 MAX_ENTRIES = 100
@@ -150,13 +156,16 @@ def _ease_out_cubic(u):
     return 1.0 - (1.0 - u) ** 3
 
 
-def _rotation_at(t, final_rotation):
-    """Wheel rotation (deg CCW) at time t seconds."""
-    if t <= WINDUP_END:
-        u = t / WINDUP_END
+def _rotation_at(t, final_rotation, wait, windup_end, spin_end):
+    """Wheel rotation (deg CCW) at time t seconds, for the given timeline:
+    still until `wait`, wind-up until `windup_end`, ease-out until `spin_end`."""
+    if t <= wait:
+        return 0.0
+    if t <= windup_end:
+        u = (t - wait) / (windup_end - wait)
         return WINDUP_DEG * _ease_in_out_quad(u)
-    if t < SPIN_END:
-        u = (t - WINDUP_END) / (SPIN_END - WINDUP_END)
+    if t < spin_end:
+        u = (t - windup_end) / (spin_end - windup_end)
         return WINDUP_DEG + (final_rotation - WINDUP_DEG) * _ease_out_cubic(u)
     return final_rotation
 
@@ -195,7 +204,19 @@ def _clean_options(options):
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", str(accent)):
         accent = DEFAULT_ACCENT
 
-    return entries, mode, winner, accent
+    def _phase(key, default, lo, hi):
+        try:
+            value = int(options.get(key, default))
+        except (TypeError, ValueError):
+            value = default
+        return max(lo, min(hi, value))
+
+    timing = (
+        _phase("wait_seconds", WAIT_DEFAULT, WAIT_MIN, WAIT_MAX),
+        _phase("spin_seconds", SPIN_DEFAULT, SPIN_MIN, SPIN_MAX),
+        _phase("winner_seconds", WINNER_DEFAULT, WINNER_MIN, WINNER_MAX),
+    )
+    return entries, mode, winner, accent, timing
 
 
 # ------------------------------------------------------- cached art layers
@@ -221,9 +242,8 @@ def _build_background():
     return img.resize((WIDTH, HEIGHT), _BILINEAR)
 
 
-def _label_image(text, seg_color, seg_deg):
-    """RGBA image of one label, horizontal, sized to fit its segment.
-    Sizes are in 2x (supersampled) pixels."""
+def _label_bounds(seg_deg):
+    """(max_w, max_h) available to a label, in 2x (supersampled) pixels."""
     r2 = WHEEL_R * SS
     hub2 = HUB_R * SS
     # Radial run available for the text (2x px).
@@ -231,15 +251,37 @@ def _label_image(text, seg_color, seg_deg):
     # Tangential space near the label band (2x px).
     band = 2.0 * LABEL_RADIUS_FRAC * r2 * math.sin(math.radians(seg_deg) / 2)
     max_h = max(30, min(int(band) - 2 * SEG_GAP * SS, 160))
+    return max_w, max_h
 
+
+def _common_label_size(entries, seg_deg):
+    """ONE font size (2x px) that fits EVERY entry.
+
+    Labels used to be sized per entry, so a longer name rendered visibly
+    smaller than its neighbours. In choose-winner mode that typographic odd
+    one out could telegraph where the wheel lands. A single shared size keeps
+    all segments identical, so nothing gives the result away."""
+    max_w, max_h = _label_bounds(seg_deg)
     size = LABEL_MAX_PX * SS
-    font = fonts.load("label", size)
     while size > 10 * SS:
         font = fonts.load("label", size)
-        x0, y0, x1, y1 = font.getbbox(text)
-        if x1 - x0 <= max_w and y1 - y0 <= max_h:
+        ok = True
+        for text in entries:
+            x0, y0, x1, y1 = font.getbbox(text)
+            if x1 - x0 > max_w or y1 - y0 > max_h:
+                ok = False
+                break
+        if ok:
             break
         size -= 2 * SS
+    return size
+
+
+def _label_image(text, seg_color, seg_deg, size):
+    """RGBA image of one label, horizontal, at the SHARED font size
+    (see _common_label_size). Sizes are in 2x (supersampled) pixels."""
+    max_w, _max_h = _label_bounds(seg_deg)
+    font = fonts.load("label", size)
     # Last resort at min size: ellipsize.
     shown = text
     x0, y0, x1, y1 = font.getbbox(shown)
@@ -273,9 +315,11 @@ def _build_wheel(entries, colors):
 
     # Labels at ~0.62*R along each mid-angle, rotated to read along the
     # radius. Left-half labels are flipped 180 so no label starts life
-    # upside down (they read inward instead).
+    # upside down (they read inward instead). All share one font size so no
+    # entry stands out (a size tell could reveal a chosen winner).
+    label_size = _common_label_size(entries, seg)
     for i, entry in enumerate(entries):
-        label = _label_image(entry, colors[i], seg)
+        label = _label_image(entry, colors[i], seg, label_size)
         theta = math.radians((i + 0.5) * seg - 90.0)
         px = c + LABEL_RADIUS_FRAC * r2 * math.cos(theta)
         py = c + LABEL_RADIUS_FRAC * r2 * math.sin(theta)
@@ -404,8 +448,16 @@ def _faded(rgba, factor):
 
 def render_spinner(options, progress_cb):
     """Render the decision wheel MP4. Returns the filename basename."""
-    entries, mode, winner, accent = _clean_options(options)
+    entries, mode, winner, accent, timing = _clean_options(options)
     n = len(entries)
+
+    # User-editable timeline: still -> wind-up+spin -> winner card hold.
+    wait_s, spin_s, winner_s = timing
+    windup_end = wait_s + WINDUP_LEN
+    spin_end = windup_end + spin_s
+    card_in = spin_end + CARD_DELAY
+    duration = spin_end + winner_s
+    total_frames = int(round(duration * OUTPUT_FPS))
 
     if mode == "random":
         winner = random.choice(entries)
@@ -447,14 +499,15 @@ def render_spinner(options, progress_cb):
     base = None
     settled = None      # fully-faded final frame, reused for the hold
     with FrameEncoder(out_path, OUTPUT_FPS) as enc:
-        for k in range(TOTAL_FRAMES):
+        for k in range(total_frames):
             t = k / float(OUTPUT_FPS)
-            rotation = _rotation_at(t, final_rotation)
+            rotation = _rotation_at(t, final_rotation, wait_s, windup_end,
+                                    spin_end)
             if base is None or rotation != last_rotation:
                 base = compose_base(rotation)
                 last_rotation = rotation
 
-            fade = (t - CARD_IN) / CARD_FADE
+            fade = (t - card_in) / CARD_FADE
             if fade <= 0.0:
                 frame = base
             elif fade < 1.0:
@@ -468,6 +521,6 @@ def render_spinner(options, progress_cb):
                 frame = settled
 
             enc.add_frame(frame)
-            progress_cb(int((k + 1) * 100.0 / TOTAL_FRAMES))
+            progress_cb(int((k + 1) * 100.0 / total_frames))
 
     return os.path.basename(out_path)

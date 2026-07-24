@@ -389,6 +389,14 @@
     return el ? el.value : "random";
   }
 
+  function readSpinnerTiming() {
+    return {
+      wait: intFrom($("spinner-wait")),
+      spin: intFrom($("spinner-spin")),
+      winner: intFrom($("spinner-winner-secs"))
+    };
+  }
+
   function validateSpinner() {
     var entries = readEntries();
     if (entries.length < 2) return "The wheel needs at least 2 non-empty entries.";
@@ -396,6 +404,10 @@
     var tooLong = entries.filter(function (e) { return e.length > 40; });
     if (tooLong.length) return 'Each entry must be 40 characters or fewer — "' + tooLong[0].slice(0, 20) + '…" is too long.';
     if (spinnerMode() === "choose" && !$("spinner-winner").value) return "Pick a winner from the list.";
+    var t = readSpinnerTiming();
+    if (t.wait === null || t.wait < 0 || t.wait > 60) return "Wait must be a whole number from 0 to 60 seconds.";
+    if (t.spin === null || t.spin < 2 || t.spin > 30) return "Spin must be a whole number from 2 to 30 seconds.";
+    if (t.winner === null || t.winner < 1 || t.winner > 30) return "Winner must be a whole number from 1 to 30 seconds.";
     return null;
   }
 
@@ -490,19 +502,25 @@
     }
 
     // labels at 0.62R along each mid-angle, reading along the radius;
-    // left-half labels flipped so nothing starts life upside down
+    // left-half labels flipped so nothing starts life upside down.
+    // ONE font size shared by every label (the size that fits the longest
+    // entry): per-label sizing made an odd one out that could telegraph a
+    // chosen winner. Mirrors _common_label_size() in render/spinner.py.
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     var maxLabelW = R - hubR - 30;
+    var band = 2 * 0.62 * R * Math.sin(segRad / 2);
+    var px = Math.max(10, Math.min(23, Math.floor(band * 0.5)));
+    ctx.font = "600 " + px + "px " + FONT_LABEL;
     for (i = 0; i < n; i++) {
-      var mid = (i + 0.5) * segRad - Math.PI / 2;
-      var band = 2 * 0.62 * R * Math.sin(segRad / 2);
-      var px = Math.max(10, Math.min(23, Math.floor(band * 0.5)));
-      ctx.font = "600 " + px + "px " + FONT_LABEL;
       while (px > 10 && ctx.measureText(entries[i]).width > maxLabelW) {
         px -= 1;
         ctx.font = "600 " + px + "px " + FONT_LABEL;
       }
+    }
+    for (i = 0; i < n; i++) {
+      var mid = (i + 0.5) * segRad - Math.PI / 2;
+      ctx.font = "600 " + px + "px " + FONT_LABEL;
       var label = fitLabelText(ctx, entries[i], maxLabelW);
       ctx.save();
       ctx.rotate(mid);
@@ -593,7 +611,7 @@
   // Test spin: same motion profile as the renderer — 0.8s wind-up to -25deg,
   // then a cubic ease-out to 5 full CCW revolutions plus the landing angle
   // (jitter keeps it inside the central 70% of the winning segment).
-  var WINDUP_END = 0.8, SPIN_END = 7.8, WINDUP_DEG = -25, FULL_SPINS = 5;
+  var WINDUP_LEN = 0.8, WINDUP_DEG = -25, FULL_SPINS = 5;
 
   function easeInOutQuad(u) {
     return u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
@@ -601,10 +619,12 @@
   function easeOutCubic(u) {
     return 1 - Math.pow(1 - u, 3);
   }
-  function rotationAt(t, finalRotation) {
-    if (t <= WINDUP_END) return WINDUP_DEG * easeInOutQuad(t / WINDUP_END);
-    if (t < SPIN_END) {
-      var u = (t - WINDUP_END) / (SPIN_END - WINDUP_END);
+  // Test spin honours the configured SPIN length (wait/winner phases are
+  // render-only; a test spin should start immediately).
+  function rotationAt(t, finalRotation, spinEnd) {
+    if (t <= WINDUP_LEN) return WINDUP_DEG * easeInOutQuad(t / WINDUP_LEN);
+    if (t < spinEnd) {
+      var u = (t - WINDUP_LEN) / (spinEnd - WINDUP_LEN);
       return WINDUP_DEG + (finalRotation - WINDUP_DEG) * easeOutCubic(u);
     }
     return finalRotation;
@@ -620,9 +640,11 @@
 
   function testSpin() {
     var entries = readEntries();
-    if (spin.animating || entries.length < 2 || entries.length > 20) return;
+    if (spin.animating || entries.length < 2 || entries.length > 100) return;
     var n = entries.length;
     var segDeg = 360 / n;
+    var timing = readSpinnerTiming();
+    var spinEnd = WINDUP_LEN + (timing.spin === null ? 7 : timing.spin);
 
     var winnerIndex;
     if (spinnerMode() === "choose") {
@@ -642,9 +664,9 @@
 
     var frame = function (now) {
       var t = (now - t0) / 1000;
-      spin.rotDeg = rotationAt(t, finalRotation);
+      spin.rotDeg = rotationAt(t, finalRotation, spinEnd);
       drawSpinnerPreview();
-      if (t < SPIN_END) {
+      if (t < spinEnd) {
         spin.raf = requestAnimationFrame(frame);
       } else {
         spin.raf = 0;
@@ -682,22 +704,42 @@
     }
   }
 
+  // Proportional timeline bar + total-length hint for the editable phases.
+  function updateSpinnerTimeline() {
+    var t = readSpinnerTiming();
+    var wait = t.wait === null ? 0 : t.wait;
+    var spinS = t.spin === null ? 7 : t.spin;
+    var winner = t.winner === null ? 4 : t.winner;
+    $("tl-wait").hidden = wait === 0;
+    $("tl-wait").style.flexGrow = String(Math.max(wait, 0.001));
+    $("tl-spin").style.flexGrow = String(spinS + 0.8);  // includes the wind-up
+    $("tl-winner").style.flexGrow = String(winner);
+    var total = wait + 0.8 + spinS + winner;
+    $("spinner-timing-hint").textContent =
+      "All in seconds. Total video: " + total.toFixed(1) + "s";
+  }
+
   function updateSpinner() {
     var entries = readEntries();
     updateCountBadge(entries.length);
     rebuildWinnerSelect(entries);
     $("spinner-winner-row").hidden = (spinnerMode() !== "choose");
     $("spinner-export").disabled = !!validateSpinner();
-    $("spinner-test").disabled = spin.animating || entries.length < 2 || entries.length > 20;
+    $("spinner-test").disabled = spin.animating || entries.length < 2 || entries.length > 100;
+    updateSpinnerTimeline();
     drawSpinnerPreview();
   }
 
   function spinnerPayload() {
     var mode = spinnerMode();
+    var t = readSpinnerTiming();
     var options = {
       entries: readEntries(),
       accent: currentAccent("spinner"),
-      mode: (mode === "choose") ? "rigged" : "random"
+      mode: (mode === "choose") ? "rigged" : "random",
+      wait_seconds: t.wait === null ? 0 : t.wait,
+      spin_seconds: t.spin === null ? 7 : t.spin,
+      winner_seconds: t.winner === null ? 4 : t.winner
     };
     if (mode === "choose") options.winner = $("spinner-winner").value;
     return { type: "spinner", options: options };
@@ -1438,6 +1480,9 @@
     updateSpinner();   // recomputes button state; ends with drawSpinnerPreview()
   });
   wireAccent("spinner", updateSpinner);
+  ["spinner-wait", "spinner-spin", "spinner-winner-secs"].forEach(function (id) {
+    $(id).addEventListener("input", updateSpinner);
+  });
 
   // AI fill panel
   $("spinner-ai-toggle").addEventListener("click", toggleAiPanel);

@@ -115,7 +115,7 @@ def main():
             {"entries": ["Alice", "Bob", "Carol", "Dave"],
              "mode": "rigged", "winner": "Carol", "accent": "#e8b44f"},
             quiet_progress)
-        rendered.append(("spinner", fn, 12.0))
+        rendered.append(("spinner", fn, 11.8))  # 0 wait + 0.8 windup + 7 spin + 4 winner
 
         # QR "scan to..." card — short 5 s clip.
         fn = render_qr(

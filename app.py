@@ -16,7 +16,7 @@ import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.12.0"
+APP_VERSION = "1.13.0"
 GITHUB_REPO = "jimhoggey/service-visuals"
 
 import io
@@ -182,6 +182,13 @@ def validate_spinner_options(options):
         "entries": entries,
         "mode": mode,
         "accent": _accent_field(options),
+        # Editable timeline: still -> spin -> winner card (whole seconds).
+        "wait_seconds": _int_field(
+            options, "wait_seconds", 0, 60, 0, "Wait before the spin"),
+        "spin_seconds": _int_field(
+            options, "spin_seconds", 2, 30, 7, "Spin length"),
+        "winner_seconds": _int_field(
+            options, "winner_seconds", 1, 30, 4, "Show-winner length"),
     }
 
     if mode == "rigged":

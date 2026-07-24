@@ -834,6 +834,34 @@ canvas {
   color: var(--ink-dim);
 }
 
+/* ---- Spinner editable timeline ---- */
+.tl-bar {
+  display: flex;
+  gap: 3px;
+  height: 26px;
+  margin-bottom: 10px;
+  border-radius: 7px;
+  overflow: hidden;
+}
+.tl-seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  border-radius: 4px;
+  transition: flex-grow 0.15s ease;
+}
+.tl-seg span {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.tl-wait { background: #23262b; color: var(--ink-dim); }
+.tl-spin { background: rgba(232, 180, 79, 0.28); color: var(--accent); }
+.tl-winner { background: rgba(63, 220, 123, 0.16); color: var(--green); }
+
 /* ---- Spinner AI fill ---- */
 .entries-foot {
   display: flex;
