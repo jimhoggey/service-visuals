@@ -163,6 +163,16 @@ def _parse_entries(text):
         except ValueError:
             items = []
 
+    if not items:
+        # Truncated or malformed JSON array (e.g. max_tokens cut the reply
+        # mid-list, leaving no closing bracket): salvage every COMPLETE quoted
+        # string after the first '['. Without this, the line-split fallback
+        # below used to swallow the whole one-line array as a single garbage
+        # entry like '["Genesis", "Exodus", "Levi…'.
+        bracket = text.find("[")
+        if bracket != -1 and '"' in text[bracket:]:
+            items = re.findall(r'"((?:[^"\\]|\\.){1,80})"', text[bracket:])
+
     if not items:                       # fallback: one entry per line
         for line in text.splitlines():
             line = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", line).strip()
@@ -194,7 +204,10 @@ def _chat(key, model, messages):
         "model": model,
         "messages": messages,
         "temperature": 0.8,
-        "max_tokens": 800,
+        # Generous: a full 100-item list is ~1k tokens of JSON, and some free
+        # models spend tokens on reasoning first. 800 used to truncate long
+        # lists mid-array, which corrupted the parse.
+        "max_tokens": 4000,
     }).encode("utf-8")
     req = urllib.request.Request(
         ENDPOINT, data=body, method="POST",

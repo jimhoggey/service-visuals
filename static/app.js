@@ -611,7 +611,9 @@
   // Test spin: same motion profile as the renderer — 0.8s wind-up to -25deg,
   // then a cubic ease-out to 5 full CCW revolutions plus the landing angle
   // (jitter keeps it inside the central 70% of the winning segment).
-  var WINDUP_LEN = 0.8, WINDUP_DEG = -25, FULL_SPINS = 5;
+  // Revolutions scale with the spin length (5 revs per default 7s, min 2) so
+  // the wheel feels the same speed whatever the timing — mirrors spinner.py.
+  var WINDUP_LEN = 0.8, WINDUP_DEG = -25, SPINS_PER_SEC = 5 / 7;
 
   function easeInOutQuad(u) {
     return u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
@@ -654,7 +656,8 @@
       winnerIndex = Math.floor(Math.random() * n);
     }
     var frac = 0.15 + 0.7 * Math.random();     // never a segment boundary
-    var finalRotation = FULL_SPINS * 360 + (winnerIndex + frac) * segDeg;
+    var fullSpins = Math.max(2, Math.round(SPINS_PER_SEC * (spinEnd - WINDUP_LEN)));
+    var finalRotation = fullSpins * 360 + (winnerIndex + frac) * segDeg;
 
     spin.animating = true;
     spin.winner = -1;

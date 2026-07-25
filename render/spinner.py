@@ -79,7 +79,11 @@ CARD_CENTER_Y = 880
 
 WINDUP_LEN = 0.8
 WINDUP_DEG = -25.0
-FULL_SPINS = 5
+# Revolutions scale with the spin length so the wheel FEELS the same speed
+# whatever the operator sets: a fixed count meant 5 revs crammed into a 2s
+# spin (frantic) or stretched over 30s (a crawl). 5 revs per the default 7s,
+# never fewer than 2 so even the shortest spin still reads as a real spin.
+SPINS_PER_SEC = 5.0 / 7.0
 CARD_FADE = 0.4
 CARD_DELAY = 0.2          # gap between the wheel settling and the card fading in
 
@@ -464,7 +468,8 @@ def render_spinner(options, progress_cb):
     winner_index = entries.index(winner)
 
     jitter = random.random()
-    final_rotation = FULL_SPINS * 360.0 + landing_rotation(
+    full_spins = max(2, int(round(SPINS_PER_SEC * spin_s)))
+    final_rotation = full_spins * 360.0 + landing_rotation(
         winner_index, n, jitter)
     # Belt and braces: the pure math must agree before we spend render time.
     assert segment_at_pointer(final_rotation % 360.0, n) == winner_index
