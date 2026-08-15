@@ -251,6 +251,23 @@ button.tile:active { transform: translateY(0); }
   color: var(--ink-dim);
 }
 
+/* Flags a tile added in the current release, so an operator who just updated
+   can see what is new at a glance. Retire it when the next tile lands. */
+.tile-new {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: rgba(232, 180, 79, 0.12);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  vertical-align: 2px;
+}
+
 .tile-disabled {
   opacity: 0.5;
   border-style: dashed;

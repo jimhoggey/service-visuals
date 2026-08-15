@@ -41,7 +41,7 @@ import threading
 import time
 import uuid
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 from . import fonts
 from .encoder import export_path
@@ -1103,37 +1103,93 @@ def _erase(img, box):
 DIGIT_SET = "0123456789"
 
 
-def _font_glyph(char, cap_height, ink):
-    """Draw a digit the board never showed us, matched to the harvested band.
+# A bundled system font is lighter than the chunky display faces these boards
+# use: on the sample board the harvested digits carry a 24px stroke while the
+# fallback 8 came out at 18px, and that ~25% difference reads as "the 8 looks
+# wrong" even when the height and colour match exactly. So the fallback is
+# emboldened to the measured stroke of its neighbours by dilating the glyph
+# before it is scaled down (dilating at 3x then fitting to the cap height
+# thickens the stroke without changing the height).
+MAX_FONT_GROW = 14
+
+
+def _stroke_width(mask):
+    """Median horizontal ink-run length — a robust proxy for stroke weight."""
+    px = mask.load()
+    runs = []
+    for y in range(mask.height):
+        run = 0
+        for x in range(mask.width):
+            if px[x, y] > 128:
+                run += 1
+            elif run:
+                runs.append(run)
+                run = 0
+        if run:
+            runs.append(run)
+    if not runs:
+        return 0.0
+    runs.sort()
+    return float(runs[len(runs) // 2])
+
+
+def _font_mask(char, cap_height, grow):
+    """Alpha mask for `char` at `cap_height`, dilated `grow` steps first.
 
     The reference height is the whole digit SET's band, never this
     character's own ink height. A flat-topped "1", "4" or "7" is genuinely
     shorter than a round "0" — scaling each fallback so its own ink fills the
     cap height stretches the flat ones and breaks the shared top line. So the
     set is rendered once to find the band, and the character is cropped out of
-    that band, keeping its true position within it.
+    that band, keeping its true position within it. The dilation is applied to
+    BOTH canvases so the band grows with the glyph and alignment is preserved.
     """
     cap_height = max(1, min(int(cap_height), MAX_CAP_HEIGHT))
     size = max(8, min(int(cap_height * 3), 600))
     font = fonts.load("digits", size)
     extent = font.getbbox(DIGIT_SET)
-    canvas_size = (max(1, extent[2] + size), max(1, extent[3] + size))
+    pad = size + 2 * grow
+    canvas_size = (max(1, extent[2] + pad), max(1, extent[3] + pad))
 
     every = Image.new("L", canvas_size, 0)
     ImageDraw.Draw(every).text((0, 0), DIGIT_SET, font=font, fill=255)
-    band = every.getbbox()
     one = Image.new("L", canvas_size, 0)
     ImageDraw.Draw(one).text((0, 0), char, font=font, fill=255)
+    for _ in range(grow):
+        every = every.filter(ImageFilter.MaxFilter(3))
+        one = one.filter(ImageFilter.MaxFilter(3))
+
+    band = every.getbbox()
     box = one.getbbox()
     if not band or not box:
         return None
-
     mask = one.crop((box[0], band[1], box[2], band[3]))
     scale = cap_height / float(max(1, mask.height))
     width = max(1, int(round(mask.width * scale)))
-    mask = mask.resize((width, cap_height), _LANCZOS)
-    glyph = Image.new("RGBA", mask.size, tuple(ink) + (0,))
-    glyph.putalpha(mask)
+    return mask.resize((width, cap_height), _LANCZOS)
+
+
+def _font_glyph(char, cap_height, ink, target_stroke=None):
+    """Draw a digit the board never showed us, matched to the harvested band
+    and — when we know what its neighbours weigh — to their stroke too."""
+    best = None
+    best_err = None
+    for grow in range(0, MAX_FONT_GROW + 1):
+        mask = _font_mask(char, cap_height, grow)
+        if mask is None:
+            return None
+        if not target_stroke:
+            best = mask
+            break
+        err = abs(_stroke_width(mask) - float(target_stroke))
+        if best_err is None or err < best_err:
+            best, best_err = mask, err
+        else:
+            break            # dilation only thickens; past the match, stop
+    if best is None:
+        return None
+    glyph = Image.new("RGBA", best.size, tuple(ink) + (0,))
+    glyph.putalpha(best)
     return glyph
 
 
@@ -1190,7 +1246,64 @@ def _load_glyph(glyph_dir, styles, style, char, cap_height, ink):
                 (max(1, int(round(glyph.width * scale))),
                  max(1, int(cap_height))), _LANCZOS)
         return glyph
-    return _font_glyph(char, cap_height, ink)
+    # Nothing harvested for this character — weigh its neighbours so the
+    # bundled font can be emboldened to match rather than looking spindly
+    # beside them.
+    return _font_glyph(char, cap_height, ink,
+                       _harvested_stroke(paths, cap_height))
+
+
+_STROKE_CACHE = {}
+
+
+def _harvested_stroke(paths, cap_height):
+    """Median stroke of whatever glyphs DO exist alongside a missing one.
+
+    `paths` is the same preference-ordered list _load_glyph just tried, so we
+    measure siblings in the box's own style first. Scaled to the target cap
+    height, because a glyph borrowed from a smaller style is thinner in
+    absolute pixels but the same weight relative to its height.
+    """
+    dirs = []
+    for path in paths:
+        folder = os.path.dirname(path)
+        if folder not in dirs:
+            dirs.append(folder)
+    for folder in dirs:
+        key = (folder, int(cap_height))
+        if key in _STROKE_CACHE:
+            if _STROKE_CACHE[key]:
+                return _STROKE_CACHE[key]
+            continue
+        widths = []
+        try:
+            names = sorted(os.listdir(folder))
+        except OSError:
+            names = []
+        for name in names:
+            if not name.endswith(".png") or len(name) != 5:
+                continue
+            try:
+                sibling = Image.open(os.path.join(folder, name)).convert("RGBA")
+            except Exception:
+                continue
+            if sibling.height <= 0:
+                continue
+            alpha = sibling.split()[3]
+            if sibling.height != cap_height:
+                scale = cap_height / float(sibling.height)
+                alpha = alpha.resize(
+                    (max(1, int(round(sibling.width * scale))),
+                     max(1, int(cap_height))), _LANCZOS)
+            width = _stroke_width(alpha)
+            if width > 0:
+                widths.append(width)
+        widths.sort()
+        result = widths[len(widths) // 2] if widths else 0.0
+        _STROKE_CACHE[key] = result
+        if result:
+            return result
+    return 0.0
 
 
 def _pair_gaps(box, value, fallback):
