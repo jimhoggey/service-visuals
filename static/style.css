@@ -1101,7 +1101,12 @@ canvas {
   font-size: 13px;
   color: var(--ink);
   text-decoration: none;
+  border: none;
   border-bottom: 1px dashed var(--line-2);
+  background: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
   word-break: break-all;
 }
 .sess-file:hover { color: var(--accent); border-color: var(--accent); }

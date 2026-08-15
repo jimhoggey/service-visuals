@@ -25,11 +25,14 @@ redrawing the full 1920x1080 canvas at high resolution.
 import math
 import os
 import re
+import threading
+from collections import OrderedDict
 
 from PIL import Image, ImageDraw
 
 from . import fonts
-from .encoder import FrameEncoder, WIDTH, HEIGHT, export_path
+from .encoder import (FrameEncoder, WIDTH, HEIGHT, encode_parallel,
+                      export_path)
 
 TIMER_OUTPUT_FPS = 15   # see the FrameEncoder call in render_timer()
 
@@ -219,9 +222,19 @@ def _render_digits(text, color, met):
 
 
 def _format_remaining(rem, total):
+    """Format `rem` with field widths fixed by the INITIAL total, zero-padded.
+
+    A 10-minute timer renders "10:00" then "09:59" (not " 9:59"): the string
+    is always the same width, so the digits never jitter AND the visible
+    glyphs are always dead-centred. The old space-padding kept the block
+    width constant but left the visible text half a slot off-centre for
+    almost the whole video — clearly visible inside the ring.
+    """
     if total >= 3600:
         return "{0}:{1:02d}:{2:02d}".format(
             rem // 3600, (rem % 3600) // 60, rem % 60)
+    if total >= 600:
+        return "{0:02d}:{1:02d}".format(rem // 60, rem % 60)
     return "{0}:{1:02d}".format(rem // 60, rem % 60)
 
 
@@ -301,49 +314,54 @@ def render_timer(options, progress_cb):
     out_path = export_path(
         "timer", "{0}m{1:02d}s_{2}".format(total // 60, total % 60, style))
 
-    cached_key = None      # (text, color) of the base currently cached
-    cached_base = None     # background + digits for that second
-    last_pct = -1
-    # A countdown's content changes once a second (classic) or creeps smoothly
-    # (ring/bar), so encoding 30 fps is pure waste — a 5-minute timer meant
-    # 9000 encoded frames, ~64% of the render time. 15 fps looks identical for
-    # this content and halves the encode.
-    with FrameEncoder(out_path, input_fps=fps, output_fps=TIMER_OUTPUT_FPS) as enc:
-        for i in range(total_frames):
-            t = i / float(fps)
-            elapsed = int(t)
-            rem = total - elapsed if elapsed < total else 0
-            # Space-pad to the initial width (e.g. "10:00" -> " 9:59") so the
-            # block width never changes and no glyph shifts sideways mid-video.
-            text = _format_remaining(rem, total).rjust(len(initial_text))
-            color = accent if (warn_last10 and rem <= 10) else DIGITS_COLOR
-            key = (text, color)
-            if key != cached_key:
-                block = _render_digits(text, color, met)
-                base = bg.copy()
-                base.paste(block,
-                           (WIDTH // 2 - block.width // 2,
-                            digits_cy - block.height // 2),
-                           block)
-                cached_base, cached_key = base, key
+    # Digit bases (background + digits for one displayed second) are shared
+    # by every frame within that second. The cache is small and lock-guarded
+    # so frame generation can run on the encode_parallel thread pool —
+    # frames are pure functions of their index. LRU-capped: a 2h timer would
+    # otherwise hold thousands of full frames (~6 MB each) in memory.
+    bases = OrderedDict()
+    bases_lock = threading.Lock()
 
-            if style == "classic":
-                frame = cached_base          # nothing animates within a second
+    def base_for(rem):
+        color = accent if (warn_last10 and rem <= 10) else DIGITS_COLOR
+        text = _format_remaining(rem, total)
+        key = (text, color)
+        with bases_lock:
+            cached = bases.get(key)
+            if cached is not None:
+                bases.move_to_end(key)
+                return cached
+        block = _render_digits(text, color, met)
+        base = bg.copy()
+        base.paste(block,
+                   (WIDTH // 2 - block.width // 2,
+                    digits_cy - block.height // 2),
+                   block)
+        with bases_lock:
+            bases[key] = base
+            while len(bases) > 16:
+                bases.popitem(last=False)
+        return base
+
+    def make_frame(i):
+        t = i / float(fps)
+        elapsed = int(t)
+        rem = total - elapsed if elapsed < total else 0
+        base = base_for(rem)
+        if style == "classic":
+            return base                  # nothing animates within a second
+        frame = base.copy()
+        frac = max(0.0, 1.0 - t / float(total))
+        if frac > 0.0:
+            if style == "ring":
+                frame.paste(accent_tile, _RING_ORIGIN, _ring_mask(frac))
             else:
-                frame = cached_base.copy()
-                frac = max(0.0, 1.0 - t / float(total))
-                if frac > 0.0:
-                    if style == "ring":
-                        frame.paste(accent_tile, _RING_ORIGIN,
-                                    _ring_mask(frac))
-                    else:
-                        frame.paste(accent_tile, (BAR_MARGIN, BAR_TOP),
-                                    _bar_mask(frac))
-            enc.add_frame(frame)
+                frame.paste(accent_tile, (BAR_MARGIN, BAR_TOP),
+                            _bar_mask(frac))
+        return frame
 
-            pct = (i + 1) * 100 // total_frames
-            if pct != last_pct:
-                progress_cb(pct)
-                last_pct = pct
-
+    # 15 fps out looks identical for countdown content and halves the encode
+    # (a 5-minute timer at 30 fps meant 9000 encoded frames).
+    encode_parallel(out_path, fps, total_frames, make_frame, progress_cb,
+                    output_fps=TIMER_OUTPUT_FPS)
     return os.path.basename(out_path)

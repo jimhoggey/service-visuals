@@ -89,10 +89,25 @@
     $("health-text").textContent = ok ? "SERVER ONLINE" : "SERVER OFFLINE";
   }
 
+  // "Reveal in Finder" reads wrong on Windows; label the file buttons for the
+  // platform the server reports. Everything routes to /api/reveal either way.
+  var revealLabel = "SHOW FILE";
+
+  function applyPlatform(platform) {
+    revealLabel = platform === "darwin" ? "REVEAL IN FINDER"
+      : platform === "win32" ? "SHOW IN EXPLORER" : "SHOW FILE";
+    Array.prototype.forEach.call(
+      document.querySelectorAll(".reveal-btn"),
+      function (b) { b.textContent = revealLabel; });
+  }
+
   function refreshHealth() {
     fetch("/api/health", { cache: "no-store" })
       .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("bad status")); })
-      .then(function (j) { setHealth(!!(j && j.ok)); })
+      .then(function (j) {
+        setHealth(!!(j && j.ok));
+        if (j && j.platform) applyPlatform(j.platform);
+      })
       .catch(function () { setHealth(false); });
   }
 
@@ -246,10 +261,15 @@
   }
 
   // Same display rule as the renderer: unpadded minutes, H:MM:SS above 1 hour.
+  // Mirrors _format_remaining in render/timer.py: zero-padded to the initial
+  // total's width so the preview shows exactly what the video will.
   function formatClock(remaining, total) {
     var pad = function (n) { return (n < 10 ? "0" : "") + n; };
     if (total >= 3600) {
       return Math.floor(remaining / 3600) + ":" + pad(Math.floor((remaining % 3600) / 60)) + ":" + pad(remaining % 60);
+    }
+    if (total >= 600) {
+      return pad(Math.floor(remaining / 60)) + ":" + pad(remaining % 60);
     }
     return Math.floor(remaining / 60) + ":" + pad(remaining % 60);
   }
@@ -1344,14 +1364,16 @@
     }, 700);
   }
 
+  // The operator's real goal is always the file itself (to drag into
+  // ProPresenter), so showing it in Finder/Explorer is the primary action —
+  // the old Download button just played the video inside the app, which
+  // helped nobody.
   function finishExport(kind, filename) {
-    var href = "/exports/" + encodeURIComponent(filename);
     $(kind + "-filename").textContent = filename;
-    $(kind + "-download").href = href;
     $(kind + "-reveal").dataset.filename = filename;
     $(kind + "-done").hidden = false;
-    addSessionExport(kind, filename, href);
-    $(kind + "-download").focus();
+    addSessionExport(kind, filename);
+    $(kind + "-reveal").focus();
   }
 
   function failExport(kind, message) {
@@ -1394,21 +1416,31 @@
       });
   }
 
-  function addSessionExport(kind, filename, href) {
+  function addSessionExport(kind, filename) {
     var li = document.createElement("li");
     var tag = document.createElement("span");
     tag.className = "sess-kind";
     tag.textContent = kind.toUpperCase();
-    var a = document.createElement("a");
-    a.className = "sess-file";
-    a.href = href;
-    a.setAttribute("download", "");
-    a.textContent = filename;
+    // Clicking an export shows the FILE in Finder/Explorer — the old link
+    // opened the video in the app's own viewer, which is never what the
+    // operator wants when they're about to drag it into ProPresenter.
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "sess-file";
+    btn.textContent = filename;
+    btn.title = revealLabel;
+    btn.addEventListener("click", function () {
+      fetch("/api/reveal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: filename })
+      }).catch(function () {});
+    });
     var time = document.createElement("span");
     time.className = "sess-time";
     time.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     li.appendChild(tag);
-    li.appendChild(a);
+    li.appendChild(btn);
     li.appendChild(time);
     $("session-list").insertBefore(li, $("session-list").firstChild);
     $("session-panel").hidden = false;

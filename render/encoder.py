@@ -97,6 +97,63 @@ def encode_parallel(out_path, input_fps, total_frames, make_frame,
                         progress_cb(int((k + 1) * 100.0 / total_frames))
 
 
+# ---------------------------------------------------------------- codec pick
+# On Windows, gaming machines have hardware H.264 encoders (NVIDIA NVENC,
+# Intel QuickSync, AMD AMF) that encode 1080p several times faster than
+# software libx264 — the same path real editors and OBS use. We probe once
+# per process with a tiny throwaway encode and cache the first codec that
+# actually works, falling back to libx264. macOS stays on libx264: Apple
+# Silicon runs it extremely fast, and VideoToolbox benchmarked SLOWER here.
+# Override with SERVICE_VISUALS_ENCODER=libx264 (etc.) if ever needed.
+
+_CODEC_FLAGS = {
+    "libx264": ["-preset", "veryfast", "-crf", "19"],
+    "h264_nvenc": ["-preset", "p4", "-rc", "vbr", "-cq", "19", "-b:v", "0"],
+    "h264_qsv": ["-preset", "veryfast", "-global_quality", "19"],
+    "h264_amf": ["-quality", "balanced", "-rc", "cqp",
+                 "-qp_i", "19", "-qp_p", "21"],
+}
+
+_picked_codec = None
+
+
+def _probe_codec(codec):
+    """Can this ffmpeg + this machine actually encode with `codec`?"""
+    cmd = [
+        imageio_ffmpeg.get_ffmpeg_exe(), "-v", "error",
+        "-f", "lavfi", "-i", "color=c=black:s=256x256:r=30:d=0.2",
+        "-vcodec", codec, *_CODEC_FLAGS[codec],
+        "-pix_fmt", "yuv420p", "-f", "null", "-",
+    ]
+    try:
+        extra = {}
+        if sys.platform == "win32":
+            extra["creationflags"] = 0x08000000      # CREATE_NO_WINDOW
+        return subprocess.run(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=20, **extra).returncode == 0
+    except Exception:
+        return False
+
+
+def pick_codec():
+    """The fastest working H.264 encoder on this machine (cached)."""
+    global _picked_codec
+    if _picked_codec is None:
+        override = os.environ.get("SERVICE_VISUALS_ENCODER", "").strip()
+        if override in _CODEC_FLAGS:
+            _picked_codec = override
+        else:
+            candidates = (["h264_nvenc", "h264_qsv", "h264_amf", "libx264"]
+                          if sys.platform == "win32" else ["libx264"])
+            _picked_codec = "libx264"
+            for codec in candidates:
+                if _probe_codec(codec):
+                    _picked_codec = codec
+                    break
+    return _picked_codec
+
+
 class EncoderError(RuntimeError):
     pass
 
@@ -131,11 +188,10 @@ class FrameEncoder:
             "-r", str(input_fps),
             "-i", "-",
             "-an",
-            "-vcodec", "libx264",
+            "-vcodec", pick_codec(),
+            *_CODEC_FLAGS[pick_codec()],
             "-pix_fmt", "yuv420p",
             "-r", str(output_fps),
-            "-preset", "veryfast",
-            "-crf", "19",
             "-movflags", "+faststart",
             "-f", "mp4",          # .part suffix hides the extension
             self._tmp_path,

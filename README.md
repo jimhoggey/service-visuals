@@ -59,8 +59,9 @@ the new version, swaps itself out, and restarts. No manual reinstalling.
    - **Motion background**: a seamlessly-looping ambient background in your
      accent colour — Aurora, Bokeh or Waves — for worship and ambient moments.
 2. Hit **Export**. The video renders locally.
-3. **Download** or **Reveal in Finder/Explorer**, then drag the MP4 into a
-   ProPresenter media bin or playlist.
+3. Hit **Reveal in Finder** (Mac) / **Show in Explorer** (Windows) — it
+   selects the exported file so you can drag it straight into a ProPresenter
+   media bin or playlist.
 
 Output spec: 1920×1080, 30 fps, H.264 MP4 (yuv420p, faststart) — plays in
 ProPresenter out of the box.

@@ -16,7 +16,7 @@ import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.14.0"
+APP_VERSION = "1.15.0"
 GITHUB_REPO = "jimhoggey/service-visuals"
 
 import io
@@ -302,7 +302,9 @@ def index():
 
 @app.route("/api/health")
 def api_health():
-    return jsonify({"ok": True})
+    # platform lets the UI label its file button correctly
+    # ("Reveal in Finder" vs "Show in Explorer").
+    return jsonify({"ok": True, "platform": sys.platform})
 
 
 @app.route("/api/render", methods=["POST"])
@@ -607,9 +609,12 @@ def api_reveal():
     if sys.platform == "darwin":
         subprocess.run(["open", "-R", path], check=False)
     elif sys.platform == "win32":
-        # Explorer needs "/select,<path>" as ONE argument — split across two it
-        # just opens a folder without highlighting the file.
-        subprocess.run(["explorer", "/select,{0}".format(path)], check=False)
+        # Explorer needs the literal form  explorer /select,"C:\path"  — as a
+        # COMMAND STRING. With an argument list, list2cmdline wraps the whole
+        # '/select,C:\...' token in quotes (the path contains spaces), which
+        # Explorer can't parse, so it fell back to opening the default
+        # Documents folder instead of selecting the exported file.
+        subprocess.run('explorer /select,"{0}"'.format(path), check=False)
     else:
         subprocess.run(["xdg-open", os.path.dirname(path)], check=False)
     return jsonify({"ok": True})
