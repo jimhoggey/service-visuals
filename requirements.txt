@@ -3,3 +3,14 @@ pillow>=10.0
 imageio-ffmpeg>=0.5
 segno>=1.6
 certifi>=2024.2.2
+
+# OS-native OCR for the scoreboard tool (no system binary, no model files).
+ocrmac>=1.0.1; sys_platform == "darwin"
+
+# winocr's own metadata pins none of its six winrt dependencies, and the
+# package has not been released since Oct 2024 — so CI resolves the PyWinRT
+# stack fresh on every tag and the next breaking major would silently kill
+# the Windows scoreboard with no commit of ours. Bound it here instead.
+winocr>=0.0.15,<0.1; sys_platform == "win32"
+winrt-runtime>=3.2,<4; sys_platform == "win32"
+winrt-Windows.Media.Ocr>=3.2,<4; sys_platform == "win32"

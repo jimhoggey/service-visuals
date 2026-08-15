@@ -17,6 +17,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt pywebview pyinstaller
+      # OCR-free by design, so it runs everywhere: it covers the harvest,
+      # erase and compose path that a packaged build would otherwise ship
+      # untested.
+      - name: Smoke test the renderers
+        run: python scripts/smoke.py
       - name: Build .app
         run: >
           pyinstaller --noconfirm --windowed --name "Service Visuals"
@@ -26,6 +31,7 @@ jobs:
           --collect-all webview
           --collect-all segno
           --collect-all certifi
+          --collect-all ocrmac
           desktop.py
       - name: Zip .app
         run: cd dist && ditto -c -k --keepParent "Service Visuals.app" ServiceVisuals-mac.zip
@@ -47,16 +53,66 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt pywebview pyinstaller
-      - name: Build .exe
-        run: >
-          pyinstaller --noconfirm --windowed --onefile --name "Service Visuals"
-          --icon assets/icon.ico
-          --add-data "static;static"
-          --collect-all imageio_ffmpeg
-          --collect-all webview
-          --collect-all segno
-          --collect-all certifi
-          desktop.py
+      - name: Smoke test the renderers
+        run: python scripts/smoke.py
+      - name: Build .exe and probe its OCR backend
+        shell: pwsh
+        run: |
+          # winocr ships as a single MODULE, so `--collect-all winocr` finds no
+          # data, no binaries and no submodules — it is exactly equivalent to a
+          # hidden-import. What actually has to be bundled is the winrt
+          # namespace stack winocr imports at module level, split across seven
+          # distributions with no __init__.py anywhere and reaching compiled
+          # .pyd files through that shared namespace — precisely what
+          # PyInstaller's analysis drops. Missing it is silent: the build is
+          # green, and every Windows user is told "OCR isn't available on this
+          # system" when they press analyse. Hence the explicit list, and the
+          # frozen probe below, which is built from the SAME $ocr flags.
+          $ocr = @(
+            "--collect-all", "winocr",
+            "--collect-all", "winrt",
+            "--hidden-import", "winrt.system",
+            "--hidden-import", "winrt.runtime",
+            "--hidden-import", "winrt._winrt",
+            "--hidden-import", "winrt._winrt_windows_media_ocr",
+            "--hidden-import", "winrt.windows.media.ocr",
+            "--hidden-import", "winrt.windows.globalization",
+            "--hidden-import", "winrt.windows.storage.streams",
+            "--hidden-import", "winrt.windows.graphics.imaging",
+            "--hidden-import", "winrt.windows.foundation",
+            "--hidden-import", "winrt.windows.foundation.collections",
+            # typing_extensions is a hard runtime dep of winrt-runtime.
+            "--hidden-import", "typing_extensions"
+          )
+
+          pyinstaller --noconfirm --windowed --onefile --name "Service Visuals" `
+            --icon assets/icon.ico `
+            --add-data "static;static" `
+            --collect-all imageio_ffmpeg `
+            --collect-all webview `
+            --collect-all segno `
+            --collect-all certifi `
+            @ocr `
+            desktop.py
+          if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed" }
+
+          # The app itself is --windowed, so it cannot report an import error
+          # anywhere a CI log can see it. This console twin can.
+          Set-Content -Path ocr_probe.py -Encoding utf8 -Value @(
+            "import winocr",
+            "import winrt.system",
+            "import winrt.windows.media.ocr",
+            "print('ocr backend ok:', winocr.__file__)"
+          )
+          pyinstaller --noconfirm --onefile --name ocr-probe `
+            --distpath probe-dist --workpath probe-build --specpath probe-spec `
+            @ocr `
+            ocr_probe.py
+          if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed for the probe" }
+          & "probe-dist/ocr-probe.exe"
+          if ($LASTEXITCODE -ne 0) {
+            throw "the frozen build cannot import the Windows OCR backend"
+          }
       - name: Zip .exe
         run: Compress-Archive -Path "dist/Service Visuals.exe" -DestinationPath dist/ServiceVisuals-windows.zip
       - name: Attach to release

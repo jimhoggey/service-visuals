@@ -16,7 +16,7 @@ import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.15.0"
+APP_VERSION = "1.16.0"
 GITHUB_REPO = "jimhoggey/service-visuals"
 
 import io
@@ -35,6 +35,10 @@ from render.spinner import render_spinner
 from render.qr import (POSITIONS, render_qr, render_qr_image,
                        render_qr_still)
 from render.motionbg import render_motion_bg
+from render.scoreboard import (BOARDS_DIR, BoardError, OCRUnavailable,
+                               create_board, delete_board, export_board,
+                               list_boards, load_board, render_board,
+                               save_values)
 
 # When frozen by PyInstaller the static files live under the unpack dir.
 _BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
@@ -292,6 +296,111 @@ VALIDATORS = {
 
 
 # ---------------------------------------------------------------------------
+# scoreboard validation
+# ---------------------------------------------------------------------------
+
+# Board ids are minted by render.scoreboard as 12 lowercase hex-ish chars; the
+# id is used as a FOLDER NAME, so it is checked against this before anything
+# touches the filesystem (no dots, no separators, no surprises).
+BOARD_ID_RE = re.compile(r"[a-z0-9]{12}")
+
+# ASCII digits ONLY, deliberately not str.isdigit(): that returns True for
+# Arabic-Indic digits ("٣٥٠"), superscripts ("³") and other Unicode numerals,
+# none of which we can harvest a glyph for.
+BOARD_VALUE_RE = re.compile(r"[0-9]{1,6}")
+
+DEFAULT_BOARD_NAME = "Points board"
+BOARD_NAME_MAX = 60
+
+# MAX_CONTENT_LENGTH bounds the upload BYTES, not the decoded image: a 12 MB
+# JPEG can be 150 megapixels. The board pipeline is pure-Python per-pixel and
+# every preview is synchronous, so an unbounded board would pin a worker
+# thread for the best part of a minute per keystroke. Anything past the edge
+# limit is scaled down; anything past the pixel limit is refused before it is
+# decoded at all. A points board is a slide, not a poster.
+BOARD_MAX_EDGE = 4000
+BOARD_MAX_PIXELS = 60 * 1000 * 1000
+
+
+def _board_id_field(board_id):
+    """Validate a board id straight off the URL. Raises ValidationError."""
+    if not isinstance(board_id, str) or not BOARD_ID_RE.fullmatch(board_id):
+        raise ValidationError(
+            "That is not a board we know about — pick one from the list.")
+    return board_id
+
+
+def _board_name_field(raw):
+    """Optional board name -> a clean name (never empty)."""
+    if raw is None:
+        return DEFAULT_BOARD_NAME
+    if not isinstance(raw, str):
+        raise ValidationError("The board name must be text.")
+    name = raw.strip()
+    if not name:
+        return DEFAULT_BOARD_NAME
+    if len(name) > BOARD_NAME_MAX:
+        raise ValidationError(
+            "The board name must be {0} characters or fewer.".format(
+                BOARD_NAME_MAX))
+    return name
+
+
+def _values_field(board, raw):
+    """Validate {box_id: "400"} against the boxes this board actually has.
+
+    Every key must name a box on THIS board and every value must be 1-6
+    ASCII digits. An empty object is allowed and simply changes nothing.
+    """
+    if not isinstance(raw, dict):
+        raise ValidationError(
+            'Values must be an object like {"b0": "400"}.')
+
+    known = set()
+    for box in (board.get("boxes") or []):
+        if isinstance(box, dict) and isinstance(box.get("id"), str):
+            known.add(box["id"])
+
+    # The client posts the WHOLE map back on every save, seeded from what the
+    # server itself sent. So an out-of-contract value the user never typed —
+    # written by an older build, or left by a change to this regex — must not
+    # be able to fail the request: it is simply not carried forward, and the
+    # keys the user did change still save.
+    stored = board.get("values") or {}
+
+    clean = {}
+    for key, value in raw.items():
+        if not isinstance(key, str):
+            raise ValidationError(
+                "Each number is identified by text — got {0!r}.".format(key))
+        if key not in known:
+            raise ValidationError(
+                'This board has no number called "{0}" — reopen the board '
+                "and try again.".format(key[:40]))
+        if not isinstance(value, str):
+            raise ValidationError(
+                'The value for "{0}" must be text, e.g. "400".'.format(
+                    key[:40]))
+        if not BOARD_VALUE_RE.fullmatch(value):
+            if value == stored.get(key):
+                continue
+            raise ValidationError(
+                'Each number must be 1 to 6 digits (0-9) — "{0}" is not.'
+                .format(value[:20]))
+        clean[key] = value
+    return clean
+
+
+def _open_board(board_id):
+    """Validate the id and load the board.
+
+    Raises ValidationError for a malformed id; BoardError when the board
+    cannot be opened (callers turn that into a 404).
+    """
+    return load_board(_board_id_field(board_id))
+
+
+# ---------------------------------------------------------------------------
 # routes
 # ---------------------------------------------------------------------------
 
@@ -393,6 +502,203 @@ def api_upload_bg():
     name = "bg_{0}.png".format(uuid.uuid4().hex[:16])
     img.save(os.path.join(UPLOADS_DIR, name), format="PNG")
     return jsonify({"filename": name})
+
+
+# ---------------------------------------------------------------------------
+# scoreboard (points board) routes
+#
+# All synchronous — like /api/qr-image, an OCR pass or a board re-render takes
+# well under a second, so none of this goes near the render queue.
+# ---------------------------------------------------------------------------
+
+@app.route("/api/board/analyse", methods=["POST"])
+def api_board_analyse():
+    """Take the user's existing points image ONCE, OCR it, and save it as a
+    reusable board. The upload is re-encoded through Pillow first (same as
+    /api/upload-bg), which rejects anything that isn't a real image."""
+    file = request.files.get("image")
+    if file is None or not file.filename:
+        return jsonify({"error": "No image was uploaded."}), 400
+    try:
+        name = _board_name_field(request.form.get("name"))
+    except ValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    try:
+        img = Image.open(file.stream)
+        # Header only so far — check the size BEFORE decoding it.
+        if img.width * img.height > BOARD_MAX_PIXELS:
+            return jsonify({"error": (
+                "That image is {0}x{1}, which is too large to work with. "
+                "Export the board at around {2}px across and try again."
+            ).format(img.width, img.height, BOARD_MAX_EDGE)}), 400
+        if max(img.size) > BOARD_MAX_EDGE:
+            # Lets the JPEG decoder shrink as it decodes, so an oversized
+            # export never becomes a full-resolution buffer.
+            img.draft("RGB", (BOARD_MAX_EDGE, BOARD_MAX_EDGE))
+        img.load()
+        img = img.convert("RGB")
+        if max(img.size) > BOARD_MAX_EDGE:
+            img.thumbnail((BOARD_MAX_EDGE, BOARD_MAX_EDGE), Image.LANCZOS)
+    except Exception:
+        return jsonify({"error": (
+            "That file is not an image we can read (use PNG or JPG).")}), 400
+
+    try:
+        board = create_board(img, name)
+    except OCRUnavailable as exc:
+        return jsonify({"error": str(exc)}), 400
+    except BoardError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        # Never let an unexpected error answer this route with HTML — the
+        # client only knows how to read {"error": ...}.
+        app.logger.exception("board analyse failed")
+        return jsonify({"error": (
+            "That board couldn't be saved. Check there is free disk space "
+            "and try again.")}), 500
+
+    board_id = board.get("id") or board.get("board_id")
+    if not board.get("boxes"):
+        # A board with nothing editable on it is dead weight in the list.
+        try:
+            delete_board(board_id)
+        except Exception:
+            pass
+        return jsonify({"error": "No numbers were found on that image."}), 400
+
+    return jsonify({
+        "board_id": board_id,
+        "name": board.get("name", name),
+        "width": board.get("width"),
+        "height": board.get("height"),
+        "boxes": board.get("boxes"),
+    })
+
+
+@app.route("/api/board/list")
+def api_board_list():
+    return jsonify({"boards": list_boards()})
+
+
+@app.route("/api/board/<board_id>", methods=["GET"])
+def api_board_get(board_id):
+    try:
+        board = _open_board(board_id)
+    except ValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except BoardError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify(board)
+
+
+@app.route("/api/board/<board_id>/source.png")
+def api_board_source(board_id):
+    """The untouched original upload, for the UI to draw its box overlay on."""
+    try:
+        _board_id_field(board_id)
+    except ValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    root = os.path.realpath(BOARDS_DIR)
+    path = os.path.realpath(os.path.join(root, board_id, "source.png"))
+    if not path.startswith(root + os.sep) or not os.path.isfile(path):
+        return jsonify({"error": "That board no longer exists."}), 404
+    return send_file(path, mimetype="image/png")
+
+
+@app.route("/api/board/<board_id>/values", methods=["POST"])
+def api_board_values(board_id):
+    if request.content_length and request.content_length > MAX_JSON_BYTES:
+        return jsonify({"error": "Request too large."}), 413
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": (
+            'The request body must be JSON like {"values": {"b0": "400"}}.'
+        )}), 400
+
+    try:
+        board = _open_board(board_id)
+    except ValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except BoardError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    try:
+        values = _values_field(board, data.get("values"))
+        # The name rides along with the numbers rather than needing its own
+        # round trip — the UI saves both on the same debounce.
+        new_name = (_board_name_field(data["name"])
+                    if data.get("name") is not None else None)
+    except ValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    try:
+        # ONE locked read-modify-write for both, not two: each extra write
+        # widens the window in which a second tab's save can be lost.
+        updated = save_values(board_id, values, name=new_name)
+        # The UI redraws from whatever comes back, so always answer with a
+        # board even if save_values only persists and returns nothing.
+        if not isinstance(updated, dict):
+            updated = load_board(board_id)
+    except BoardError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(updated)
+
+
+@app.route("/api/board/<board_id>/preview", methods=["POST"])
+def api_board_preview(board_id):
+    """Re-render the board with its saved values and hand back the PNG, so the
+    UI shows the REAL composite (harvested glyphs and all), not a mock-up."""
+    if request.content_length and request.content_length > MAX_JSON_BYTES:
+        return jsonify({"error": "Request too large."}), 413
+    # Opened first so that "this board is gone" is a 404 like GET and DELETE,
+    # and 400 stays for a request we could not honour (a bad stored value).
+    try:
+        board = _open_board(board_id)
+    except ValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except BoardError as exc:
+        return jsonify({"error": str(exc)}), 404
+    try:
+        img = render_board(board)
+    except BoardError as exc:
+        return jsonify({"error": str(exc)}), 400
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png")
+
+
+@app.route("/api/board/<board_id>/export", methods=["POST"])
+def api_board_export(board_id):
+    """Write the finished board into exports/ and return the filename, so the
+    UI can offer the usual download / reveal-in-Finder pair."""
+    if request.content_length and request.content_length > MAX_JSON_BYTES:
+        return jsonify({"error": "Request too large."}), 413
+    try:
+        board = _open_board(board_id)
+    except ValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except BoardError as exc:
+        return jsonify({"error": str(exc)}), 404
+    try:
+        filename = export_board(board)
+    except BoardError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"filename": filename})
+
+
+@app.route("/api/board/<board_id>", methods=["DELETE"])
+def api_board_delete(board_id):
+    try:
+        _board_id_field(board_id)
+    except ValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        delete_board(board_id)
+    except BoardError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify({"ok": True})
 
 
 @app.route("/api/ai/status")

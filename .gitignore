@@ -7,3 +7,7 @@ dist/
 build/
 *.spec
 graphify-out/
+
+# Local test boards (real church content — never push to the public repo)
+Grouppoints.png
+*-board-test.png

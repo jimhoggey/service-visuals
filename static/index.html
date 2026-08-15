@@ -90,6 +90,24 @@
         <span class="tile-desc">Seamlessly-looping ambient background in your accent. Aurora, bokeh, waves.</span>
       </button>
 
+      <button class="tile" id="tile-board" type="button">
+        <svg class="glyph" viewBox="0 0 64 64" aria-hidden="true">
+          <rect x="4" y="12" width="56" height="40" rx="8" fill="#0e1013" stroke="#23262b" stroke-width="3"/>
+          <rect x="9" y="17" width="21" height="30" rx="4" fill="#f2f0eb" fill-opacity="0.08"
+                stroke="#f2f0eb" stroke-width="2"/>
+          <rect x="34" y="17" width="21" height="30" rx="4" fill="#e8b44f" fill-opacity="0.14"
+                stroke="#e8b44f" stroke-width="2"/>
+          <text x="19.5" y="40" text-anchor="middle" fill="#f2f0eb"
+                font-family="'Avenir Next','Helvetica Neue',Helvetica,sans-serif"
+                font-size="21" font-weight="700">2</text>
+          <text x="44.5" y="40" text-anchor="middle" fill="#e8b44f"
+                font-family="'Avenir Next','Helvetica Neue',Helvetica,sans-serif"
+                font-size="21" font-weight="700">7</text>
+        </svg>
+        <span class="tile-name">SCOREBOARD</span>
+        <span class="tile-desc">Update the points on your existing screen. Upload once, then just type the new numbers.</span>
+      </button>
+
       <div class="tile tile-disabled" aria-hidden="true">
         <svg class="glyph" viewBox="0 0 64 64" aria-hidden="true">
           <rect x="8" y="8" width="48" height="48" rx="10" fill="none" stroke="#23262b" stroke-width="3" stroke-dasharray="6 6"/>
@@ -672,6 +690,78 @@
                 <button class="btn" id="motionbg-again" type="button">MAKE ANOTHER</button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== SCOREBOARD ============================== -->
+  <section class="view" id="view-board" aria-labelledby="board-title" hidden>
+    <div class="view-bar">
+      <button class="btn btn-back" id="back-board" type="button">&#8592; BACK</button>
+      <h2 class="view-title" id="board-title" tabindex="-1">Scoreboard</h2>
+    </div>
+
+    <div class="error-panel" id="board-error" role="alert" hidden></div>
+
+    <!-- ---------------------------- A. PICKER ---------------------------- -->
+    <div class="panel board-picker" id="board-picker">
+      <h3 class="board-sub">Start from your points screen</h3>
+      <div class="bg-row">
+        <label class="btn btn-file" for="board-file">CHOOSE IMAGE&#8230;</label>
+        <input class="vh" type="file" id="board-file" accept="image/png,image/jpeg">
+        <span class="bg-name" id="board-file-name">No image chosen</span>
+      </div>
+      <p class="hint" id="board-upload-hint">PNG or JPG. It's read once &#8212; every number on it
+        becomes editable, and the board is saved so you only do this the first time.</p>
+
+      <h3 class="board-sub board-sub-list">Saved boards</h3>
+      <ul class="board-list" id="board-list"></ul>
+      <p class="board-empty" id="board-empty" hidden>No saved boards yet.</p>
+    </div>
+
+    <!-- ---------------------------- B. EDITOR ---------------------------- -->
+    <div class="board-editor" id="board-editor" hidden>
+      <fieldset class="fields" id="board-fields">
+
+        <div class="panel board-head">
+          <div class="num-field num-field-wide board-name-field">
+            <label for="board-name">BOARD NAME</label>
+            <input type="text" id="board-name" maxlength="60" spellcheck="false"
+              autocomplete="off" placeholder="Group points">
+          </div>
+          <button type="button" class="btn" id="board-close">CLOSE BOARD</button>
+        </div>
+
+        <div class="panel preview-panel">
+          <div class="board-stage" id="board-stage">
+            <img id="board-img" class="board-img" alt="Your points screen &#8212; click a number to change it">
+            <div class="board-busy" id="board-busy" hidden>UPDATING&#8230;</div>
+          </div>
+          <div class="preview-meta">
+            <p class="preview-caption">CLICK A NUMBER TO CHANGE IT &#8212; ENTER TO KEEP, ESC TO UNDO</p>
+            <p class="spec-line" id="board-count"></p>
+          </div>
+        </div>
+
+        <button class="btn-export" id="board-export" type="button">EXPORT PNG</button>
+      </fieldset>
+
+      <div class="progress-panel" id="board-progress" hidden>
+        <div class="progress-head">
+          <p class="progress-status" id="board-status" aria-live="polite">QUEUED</p>
+          <p class="progress-pct" id="board-pct">0%</p>
+        </div>
+        <div class="progress-track" id="board-track" role="progressbar" aria-label="Export progress"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="progress-fill" id="board-bar"></div>
+        </div>
+        <div class="done-panel" id="board-done" hidden>
+          <p class="done-filename" id="board-filename"></p>
+          <div class="btn-row">
+            <button class="btn btn-accent reveal-btn" id="board-reveal" type="button">SHOW FILE</button>
+            <button class="btn" id="board-again" type="button">MAKE ANOTHER</button>
           </div>
         </div>
       </div>

@@ -1,9 +1,9 @@
 # Service Visuals
 
-A desktop app for church tech teams. Quickly generate simple motion visuals —
-a **countdown timer**, a **decision spinner wheel**, a **QR "scan to…" card**
-and a **seamless motion background** — and export them as 1080p MP4 files
-ready to drag into **ProPresenter**.
+A desktop app for church tech teams. Quickly generate simple visuals —
+a **countdown timer**, a **decision spinner wheel**, a **QR "scan to…" card**,
+a **seamless motion background**, and a **scoreboard editor** — and export them
+as 1080p MP4s or PNGs ready to drag into **ProPresenter**.
 
 No accounts, no cloud, nothing else to install. Everything renders on your
 machine.
@@ -58,6 +58,12 @@ the new version, swaps itself out, and restarts. No manual reinstalling.
      to drop into ProPresenter.
    - **Motion background**: a seamlessly-looping ambient background in your
      accent colour — Aurora, Bokeh or Waves — for worship and ambient moments.
+   - **Scoreboard**: upload your existing points screen once. The app reads the
+     numbers with your operating system's own text recognition and saves it as a
+     reusable board. Each week: open it, click a number, type the new score,
+     export. The PNG is identical to your original except for the digits you
+     changed — the new digits are lifted from the image itself, so they match the
+     original font exactly.
 2. Hit **Export**. The video renders locally.
 3. Hit **Reveal in Finder** (Mac) / **Show in Explorer** (Windows) — it
    selects the exported file so you can drag it straight into a ProPresenter
