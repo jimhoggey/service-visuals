@@ -1103,14 +1103,17 @@ def _erase(img, box):
 DIGIT_SET = "0123456789"
 
 
-# A bundled system font is lighter than the chunky display faces these boards
-# use: on the sample board the harvested digits carry a 24px stroke while the
-# fallback 8 came out at 18px, and that ~25% difference reads as "the 8 looks
-# wrong" even when the height and colour match exactly. So the fallback is
-# emboldened to the measured stroke of its neighbours by dilating the glyph
-# before it is scaled down (dilating at 3x then fitting to the cap height
-# thickens the stroke without changing the height).
+# The bundled fallback has ONE weight, and a board can use anything. Measured
+# at cap height 86 the fallback's stroke is 18px, against 25px for Arial Black,
+# 31px for Avenir Next Heavy, but only 9-12px for Helvetica Neue / Avenir Next
+# Regular or Menlo. So a fixed weight is wrong in both directions — too spindly
+# next to a chunky poster face (the reported "the 8 looks off"), too fat beside
+# a light one. The fallback is therefore re-weighted to the measured stroke of
+# whatever digits the board DID supply: dilated when it is too thin, eroded
+# when it is too bold, before being fitted to the cap height, so height and
+# width are unchanged either way.
 MAX_FONT_GROW = 14
+MAX_FONT_SHRINK = 8
 
 
 def _stroke_width(mask):
@@ -1134,7 +1137,9 @@ def _stroke_width(mask):
 
 
 def _font_mask(char, cap_height, grow):
-    """Alpha mask for `char` at `cap_height`, dilated `grow` steps first.
+    """Alpha mask for `char` at `cap_height`, re-weighted `grow` steps first.
+
+    Positive `grow` dilates (bolder), negative erodes (lighter).
 
     The reference height is the whole digit SET's band, never this
     character's own ink height. A flat-topped "1", "4" or "7" is genuinely
@@ -1148,20 +1153,22 @@ def _font_mask(char, cap_height, grow):
     size = max(8, min(int(cap_height * 3), 600))
     font = fonts.load("digits", size)
     extent = font.getbbox(DIGIT_SET)
-    pad = size + 2 * grow
+    pad = size + 2 * abs(grow)
     canvas_size = (max(1, extent[2] + pad), max(1, extent[3] + pad))
 
     every = Image.new("L", canvas_size, 0)
     ImageDraw.Draw(every).text((0, 0), DIGIT_SET, font=font, fill=255)
     one = Image.new("L", canvas_size, 0)
     ImageDraw.Draw(one).text((0, 0), char, font=font, fill=255)
-    for _ in range(grow):
-        every = every.filter(ImageFilter.MaxFilter(3))
-        one = one.filter(ImageFilter.MaxFilter(3))
+    kernel = ImageFilter.MaxFilter(3) if grow > 0 else ImageFilter.MinFilter(3)
+    for _ in range(abs(grow)):
+        every = every.filter(kernel)
+        one = one.filter(kernel)
 
     band = every.getbbox()
     box = one.getbbox()
     if not band or not box:
+        # Eroded away entirely — this glyph cannot go that light.
         return None
     mask = one.crop((box[0], band[1], box[2], band[3]))
     scale = cap_height / float(max(1, mask.height))
@@ -1172,22 +1179,28 @@ def _font_mask(char, cap_height, grow):
 def _font_glyph(char, cap_height, ink, target_stroke=None):
     """Draw a digit the board never showed us, matched to the harvested band
     and — when we know what its neighbours weigh — to their stroke too."""
-    best = None
-    best_err = None
-    for grow in range(0, MAX_FONT_GROW + 1):
-        mask = _font_mask(char, cap_height, grow)
-        if mask is None:
+    if not target_stroke:
+        best = _font_mask(char, cap_height, 0)
+        if best is None:
             return None
-        if not target_stroke:
-            best = mask
-            break
-        err = abs(_stroke_width(mask) - float(target_stroke))
-        if best_err is None or err < best_err:
-            best, best_err = mask, err
-        else:
-            break            # dilation only thickens; past the match, stop
-    if best is None:
-        return None
+    else:
+        # Stroke rises monotonically with `grow`, so the error is unimodal:
+        # walk light -> bold and stop once it starts getting worse again.
+        best = None
+        best_err = None
+        for grow in range(-MAX_FONT_SHRINK, MAX_FONT_GROW + 1):
+            mask = _font_mask(char, cap_height, grow)
+            if mask is None:
+                continue                 # eroded to nothing; try a heavier step
+            err = abs(_stroke_width(mask) - float(target_stroke))
+            if best_err is None or err < best_err:
+                best, best_err = mask, err
+            elif best is not None:
+                break
+        if best is None:
+            best = _font_mask(char, cap_height, 0)
+        if best is None:
+            return None
     glyph = Image.new("RGBA", best.size, tuple(ink) + (0,))
     glyph.putalpha(best)
     return glyph
@@ -1306,20 +1319,48 @@ def _harvested_stroke(paths, cap_height):
     return 0.0
 
 
-def _pair_gaps(box, value, fallback):
+def _pair_gaps(box, value, fallback, widths=None):
     """Spacing for each digit pair, reusing what the board actually measured.
 
     Re-laying every digit on one median gap shifts the inner digits by a pixel
     against the original; where the new value keeps a pair the board already
     had ("35" in "350" -> "351"), the gap measured there is exact.
+
+    For a pair the board never showed us, an ink-to-ink gap is the wrong thing
+    to copy: it depends on how wide the LEFT digit is. A "1" is narrow and
+    carries a lot of side bearing, so the gap measured in "12" is far wider
+    than the one in "34" — reusing it spaced an unseen pair visibly apart.
+    Scoreboards almost always use tabular figures, so what is actually constant
+    is the PITCH (glyph width + gap). When we know the glyph widths we derive
+    the gap from the median pitch instead, and only fall back to the measured
+    median gap when we cannot.
     """
     text = str(box.get("text") or "")
     measured = box.get("gaps") or []
     lookup = {}
     for i in range(min(len(measured), max(0, len(text) - 1))):
         lookup.setdefault(text[i:i + 2], measured[i])
-    return [int(round(lookup.get(value[i:i + 2], fallback)))
-            for i in range(max(0, len(value) - 1))]
+
+    pitch = None
+    if widths:
+        pitches = [widths[text[i]] + measured[i]
+                   for i in range(min(len(measured), max(0, len(text) - 1)))
+                   if text[i] in widths]
+        if pitches:
+            pitches.sort()
+            pitch = pitches[len(pitches) // 2]
+
+    gaps = []
+    for i in range(max(0, len(value) - 1)):
+        pair = value[i:i + 2]
+        if pair in lookup:
+            gaps.append(int(round(lookup[pair])))
+            continue
+        if pitch is not None and value[i] in widths:
+            gaps.append(max(0, int(round(pitch - widths[value[i]]))))
+            continue
+        gaps.append(int(round(fallback)))
+    return gaps
 
 
 def _draw_span(img, box):
@@ -1349,7 +1390,14 @@ def _draw_value(img, glyph_dir, box, value):
     gap = int(box.get("gap") or round(cap_height * DEFAULT_GAP_RATIO))
     style = box.get("style") or ""
     styles = _harvested_styles(glyph_dir)
-    gaps = _pair_gaps(box, value, gap)
+    # Widths of every digit involved, at the box's own cap height, so the
+    # pitch estimate above can reason about narrow digits like "1".
+    widths = {}
+    for ch in set(str(box.get("text") or "")) | set(value):
+        measure = _load_glyph(glyph_dir, styles, style, ch, cap_height, ink)
+        if measure is not None:
+            widths[ch] = measure.width
+    gaps = _pair_gaps(box, value, gap, widths)
 
     def compose(cap, scale):
         drawn = [g for g in (_load_glyph(glyph_dir, styles, style, ch, cap,

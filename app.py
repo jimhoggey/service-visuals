@@ -16,7 +16,7 @@ import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.17.0"
+APP_VERSION = "1.18.0"
 GITHUB_REPO = "jimhoggey/service-visuals"
 
 import io
