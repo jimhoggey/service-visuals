@@ -78,7 +78,11 @@ switch in the footer. The full list of events lives in [`stats.py`](stats.py).
      reusable board. Each week: open it, click a number, type the new score,
      export. The PNG is identical to your original except for the digits you
      changed — the new digits are lifted from the image itself, so they match the
-     original font exactly. If the recogniser misses a number (it happens more
+     original font exactly. Numbers it misses can be marked by hand with
+     **ADD A NUMBER**. Works best on flat or lightly-textured backgrounds —
+     on heavily textured artwork (busy AI-generated posters with gradients
+     and multi-layer outlines) the digits are replaced correctly but faint
+     traces of the old number can remain around them. If the recogniser misses a number (it happens more
      on Windows than on Mac), click **ADD A NUMBER** and drag a box around it —
      it becomes editable like the rest.
 2. Hit **Export**. The video renders locally.
