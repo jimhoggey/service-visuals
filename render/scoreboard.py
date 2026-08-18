@@ -141,6 +141,74 @@ def _clip_rect(x, y, w, h, width, height):
     return {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
 
 
+NUMBER_RUN_RE = re.compile(r"[0-9]+")
+
+
+def _vision_numbers(img):
+    """Numeric runs and their exact rects, straight from Apple Vision.
+
+    Vision segments a LINE at a time, so a score and its caption often come
+    back as one token: on the user's board the two biggest numbers on the
+    image arrived as "100 POINTS" and "23." and were dropped whole, because
+    neither is purely numeric — leaving only the small "1"/"2"/"3" out of
+    "TEAM n", i.e. exactly the wrong four boxes. The dates on the Summit
+    artwork went the same way inside "FRI 30 + SAT 31 OCTOBER", so that board
+    detected nothing at all and had to be built by hand.
+
+    So we ask for the digits INSIDE each token. VNRecognizedText can report
+    the box of any character range, which gives the run's true rect rather
+    than a guess: "100 POINTS" yields a box 61% of the token's width, ending
+    where the caption starts. Everything else about recognition is unchanged
+    (accurate level, language correction on) — this only stops us throwing
+    away numbers Vision had already read.
+    """
+    import io
+
+    import Vision
+    from Foundation import NSData, NSRange
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    raw = buf.getvalue()
+    data = NSData.dataWithBytes_length_(raw, len(raw))
+    handler = Vision.VNImageRequestHandler.alloc().initWithData_options_(
+        data, None)
+    request = Vision.VNRecognizeTextRequest.alloc().init()
+    request.setRecognitionLevel_(0)          # 0 = accurate, 1 = fast
+    request.setUsesLanguageCorrection_(True)
+    handler.performRequests_error_([request], None)
+
+    found = []
+    for observation in (request.results() or []):
+        candidates = observation.topCandidates_(1)
+        if not candidates:
+            continue
+        candidate = candidates[0]
+        text = candidate.string() or ""
+        for match in NUMBER_RUN_RE.finditer(text):
+            rect = None
+            try:
+                span, _err = candidate.boundingBoxForRange_error_(
+                    NSRange(match.start(), match.end() - match.start()), None)
+                if span is not None:
+                    frame = span.boundingBox()
+                    rect = (frame.origin.x, frame.origin.y,
+                            frame.size.width, frame.size.height)
+            except Exception:
+                rect = None
+            if rect is None:
+                # No sub-box available: only usable when the whole token was
+                # the number anyway, otherwise we would place a box over the
+                # caption too.
+                if match.group(0) != text.strip():
+                    continue
+                frame = observation.boundingBox()
+                rect = (frame.origin.x, frame.origin.y,
+                        frame.size.width, frame.size.height)
+            found.append((match.group(0), rect))
+    return found
+
+
 def _detect_macos(img):
     try:
         from ocrmac import ocrmac
@@ -159,40 +227,85 @@ def _detect_macos(img):
             "would not start ({0!r}).".format(exc)) from exc
 
     width, height = img.size
-    fd, path = tempfile.mkstemp(prefix="sv-board-", suffix=".png")
-    os.close(fd)
+
+    # Preferred path: Vision itself, so numeric runs inside a longer line can
+    # be recovered with their own rects. ocrmac stays the import probe above
+    # (it is what pulls the Vision bindings into the bundle) and the fallback
+    # below, so a PyObjC change can only cost us recall, never the feature.
     try:
-        img.save(path, format="PNG")
+        results = [(text, rect) for text, rect in _vision_numbers(img)]
+    except Exception:
+        _LOG.exception("direct Vision pass failed; falling back to ocrmac")
+        results = None
+
+    if results is None:
+        fd, path = tempfile.mkstemp(prefix="sv-board-", suffix=".png")
+        os.close(fd)
         try:
-            results = ocrmac.OCR(path, recognition_level="accurate").recognize()
-        except Exception as exc:
-            raise OCRUnavailable(
-                "OCR isn't available on this system. macOS text recognition "
-                "failed ({0}).".format(exc))
-    finally:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+            img.save(path, format="PNG")
+            try:
+                items = ocrmac.OCR(path,
+                                   recognition_level="accurate").recognize()
+            except Exception as exc:
+                raise OCRUnavailable(
+                    "OCR isn't available on this system. macOS text "
+                    "recognition failed ({0}).".format(exc))
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        results = []
+        for item in items or []:
+            try:
+                results.append((str(item[0]).strip(), tuple(item[2])))
+            except Exception:
+                continue
 
     boxes = []
-    for item in results or []:
-        try:
-            text, _confidence, rect = item[0], item[1], item[2]
-            x, y, w, h = rect
-        except Exception:
-            continue
+    for text, rect in results:
         text = str(text).strip()
         # The module's own contract, not str.isdigit(): a token the values
         # API could never accept must never become an editable box.
         if not VALUE_RE.match(text):
             continue
+        try:
+            x, y, w, h = rect
+        except Exception:
+            continue
         px, py, pw, ph = _from_vision_rect(x, y, w, h, width, height)
-        rect = _clip_rect(px, py, pw, ph, width, height)
-        if rect:
-            rect["text"] = text
-            boxes.append(rect)
-    return boxes
+        clipped = _clip_rect(px, py, pw, ph, width, height)
+        if clipped:
+            clipped["text"] = text
+            boxes.append(clipped)
+    return _dedupe_boxes(boxes)
+
+
+OVERLAP_MERGE = 0.6
+
+
+def _dedupe_boxes(boxes):
+    """Drop a box that sits (almost) on top of one we already have.
+
+    A number can now be reported twice — once as a whole token and once as a
+    run inside it — and two editable boxes over one score would let the
+    operator type into the hidden one.
+    """
+    kept = []
+    for box in sorted(boxes, key=lambda b: -(b["w"] * b["h"])):
+        area = max(1, box["w"] * box["h"])
+        clash = False
+        for other in kept:
+            ox = min(box["x"] + box["w"], other["x"] + other["w"]) \
+                - max(box["x"], other["x"])
+            oy = min(box["y"] + box["h"], other["y"] + other["h"]) \
+                - max(box["y"], other["y"])
+            if ox > 0 and oy > 0 and (ox * oy) >= OVERLAP_MERGE * area:
+                clash = True
+                break
+        if not clash:
+            kept.append(box)
+    return kept
 
 
 def _detect_windows(img):
@@ -465,10 +578,15 @@ def detect_numbers(pil_image):
 # confidence. They are not scores, and making them editable gives the operator
 # three bogus boxes to mis-click on a busy Friday night. Scores are the large
 # numerals, so keep only boxes within a fraction of the tallest. Measured on the
-# user's real board: podium digits 32-39px vs scores 87-92px, so 0.6 cleanly
+# user's real board: podium digits 32-39px vs scores 87-92px, so this cleanly
 # takes 9 boxes to 6. Only applied when there is a clear size split, so a board
 # whose numbers are all one size keeps every one of them.
-DECORATIVE_RATIO = 0.6
+#
+# Measured across four real boards. Genuine scores sit at 0.83-0.95 of the
+# tallest on every one of them; the things we want gone sit at 0.42 (podium
+# digits) and 0.61 (the "1" of "TEAM 1" beside a 207px score). 0.65 separates
+# those two populations with room on both sides — 0.6 kept the team labels.
+DECORATIVE_RATIO = 0.65
 
 
 def _drop_decorative(boxes):
@@ -488,8 +606,53 @@ def _quantise(px):
             px[2] // QUANT * QUANT + half)
 
 
-def _sample_colours(pixels):
-    """Return (ink_rgb, bg_rgb) for a cropped box.
+RING_PAD = 10                    # px of frame sampled around the OCR rect
+BG_EXCLUDE = 48                  # ink must differ from bg by at least this
+
+
+def _ring_pixels(img, box, pad=RING_PAD):
+    """Pixels in the frame just OUTSIDE the tight OCR rect.
+
+    This, not the rect's own contents, is what the background looks like.
+    The rect is a TIGHT bound on the digits, so on the poster-weight numerals
+    these boards actually use, the digit FILL is the commonest colour inside
+    it — measured across the user's real boards it runs 40-60% of the rect,
+    against 37% for the card behind it. Taking "most common inside the rect"
+    as the background therefore picked the digits themselves on every board
+    whose numbers were big and bold, ink and background swapped, and the
+    render came out as a light slab with dark digits punched in it. Sampled
+    on the ring instead, the same boards read black / yellow / blue / green
+    correctly — and the cream board that already worked reads cream at 99%,
+    the value it was already storing, so nothing that worked changes.
+    """
+    x0 = max(0, box["x"] - pad)
+    y0 = max(0, box["y"] - pad)
+    x1 = min(img.width, box["x"] + box["w"] + pad)
+    y1 = min(img.height, box["y"] + box["h"] + pad)
+    if x1 <= x0 or y1 <= y0:
+        return []
+    outer = list(img.crop((x0, y0, x1, y1)).getdata())
+    ow = x1 - x0
+    ix0, iy0 = box["x"] - x0, box["y"] - y0
+    ix1, iy1 = ix0 + box["w"], iy0 + box["h"]
+    ring = []
+    for y in range(y1 - y0):
+        inside_rows = iy0 <= y < iy1
+        base = y * ow
+        for x in range(ow):
+            if inside_rows and ix0 <= x < ix1:
+                continue
+            ring.append(outer[base + x])
+    return ring
+
+
+def _sample_colours(pixels, inner=None):
+    """Return (ink_rgb, bg_rgb).
+
+    `pixels` is the RING around the box (see _ring_pixels) and decides the
+    background; `inner` is the rect itself and supplies the ink. Passing one
+    argument keeps the old single-crop behaviour for callers that have no
+    image to ring.
 
     BG is simply the most common colour. INK is scored on distance from BG
     times how much of it there is, with distance then saturation breaking
@@ -499,8 +662,11 @@ def _sample_colours(pixels):
     digits. Both colours are refined by averaging the real (unquantised)
     pixels in their bucket, so we keep the exact colour, not a bucket centre.
     """
-    if not pixels:
+    if not pixels and not inner:
         return (0, 0, 0), (255, 255, 255)
+    if not pixels:
+        pixels = inner
+    ink_pixels = inner if inner else pixels
 
     counts = {}
     for px in pixels:
@@ -508,7 +674,15 @@ def _sample_colours(pixels):
         counts[key] = counts.get(key, 0) + 1
 
     bg_key = max(counts, key=lambda k: counts[k])
-    floor = max(6, int(len(pixels) * 0.004))
+
+    # Ink is looked for INSIDE the rect; the ring is mostly background by
+    # construction and often contains none of the digit at all.
+    if ink_pixels is not pixels:
+        counts = {}
+        for px in ink_pixels:
+            key = _quantise(px)
+            counts[key] = counts.get(key, 0) + 1
+    floor = max(6, int(len(ink_pixels) * 0.004))
 
     def score(key, count):
         dist = (abs(key[0] - bg_key[0]) + abs(key[1] - bg_key[1])
@@ -519,15 +693,21 @@ def _sample_colours(pixels):
     ink_key = bg_key
     best = (-1, -1, -1)
     for key, count in counts.items():
-        if key == bg_key or count < floor:
+        if count < floor:
             continue
-        s = score(key, count)
-        if s > best:
-            best, ink_key = s, key
+        # Not just "is not the bg bucket": the rect contains plenty of real
+        # background, which quantises into buckets NEXT to the ring's, and
+        # those near-misses would otherwise be picked as the ink.
+        if (abs(key[0] - bg_key[0]) + abs(key[1] - bg_key[1])
+                + abs(key[2] - bg_key[2])) < BG_EXCLUDE:
+            continue
+        candidate = score(key, count)
+        if candidate > best:
+            best, ink_key = candidate, key
 
-    def refine(key):
+    def refine(key, source):
         rs = gs = bs = n = 0
-        for px in pixels:
+        for px in source:
             if _quantise(px) == key:
                 rs += px[0]
                 gs += px[1]
@@ -537,10 +717,48 @@ def _sample_colours(pixels):
             return key
         return (int(round(rs / n)), int(round(gs / n)), int(round(bs / n)))
 
-    return refine(ink_key), refine(bg_key)
+    return refine(ink_key, ink_pixels), refine(bg_key, pixels)
 
 
-def _coverage(pixels, ink, bg):
+OUTLINE_GAP = 60                 # a pixel this far from bg is not background
+OUTLINE_RATIO = 0.09             # outline width as a share of cap height
+OUTLINE_MAX_PX = 28              # ... and a hard ceiling, so it cannot run
+OUTLINE_TOLERANCE = 90           # how close a pixel must be to the outline colour
+
+
+def _colour_gap(a, b):
+    return abs(a[0] - b[0]) + abs(a[1] - b[1]) + abs(a[2] - b[2])
+
+
+MAX_MASK_SHARE = 0.55            # of the box; above this the model is wrong
+RESID_SLACKS = (0.35, 0.22, 0.13, 0.07)
+
+
+def _ink_mask(pixels, ink, bg, w, h, box):
+    """Coverage for a box, tightened until it describes a NUMBER.
+
+    The bg->ink axis assumes one background colour. That holds for a printed
+    card and fails for AI-generated poster art, where the panel behind the
+    score is a textured gradient with highlights: on one such board 90% of
+    the box projected onto the axis inside the default tolerance, so the
+    "erase the digits" step tried to erase the whole panel and smeared it.
+
+    A number does not cover most of its own box. So when the mask says it
+    does, the tolerance is the thing that is wrong — narrow it and look
+    again, keeping the first result that is plausible. A clean board matches
+    on the first, widest try and is completely unaffected.
+    """
+    area = max(1, box["w"] * box["h"])
+    cover = None
+    for slack in RESID_SLACKS:
+        cover = _coverage(pixels, ink, bg, slack)
+        inked = sum(1 for c in cover if c)
+        if inked <= MAX_MASK_SHARE * area:
+            return cover
+    return cover
+
+
+def _coverage(pixels, ink, bg, slack=0.35):
     """Per-pixel ink coverage 0..255 (a bytearray parallel to `pixels`).
 
     Coverage is where the pixel falls along the bg->ink colour axis, so an
@@ -555,7 +773,7 @@ def _coverage(pixels, ink, bg):
     denom = float(dr * dr + dg * dg + db * db)
     if denom < 1.0:
         return out
-    resid_max = max(40.0, 0.35 * math.sqrt(denom))
+    resid_max = max(40.0 * (slack / 0.35), slack * math.sqrt(denom))
     resid_max2 = resid_max * resid_max
     for i, px in enumerate(pixels):
         vr = px[0] - bg[0]
@@ -573,6 +791,81 @@ def _coverage(pixels, ink, bg):
             continue
         out[i] = int(t * 255.0)
     return out
+
+
+def _outline_radius(cap_height):
+    """How far beyond the fill a digit's outline may reach, in px."""
+    return max(0, min(OUTLINE_MAX_PX,
+                      int(round(cap_height * OUTLINE_RATIO))))
+
+
+def _outline_colour(cover, pixels, bg, w, h, radius):
+    """The dominant non-background colour hugging the fill, or None.
+
+    Sampled from a thin collar one step outside the ink, which is where an
+    outline lives and where the card behind a flat digit does not.
+    """
+    seed = bytearray(1 if c else 0 for c in cover)
+    collar = _dilate(seed, w, h, max(1, radius // 2))
+    counts = {}
+    for i in range(w * h):
+        if cover[i] or not collar[i]:
+            continue
+        px = pixels[i]
+        if _colour_gap(px, bg) < OUTLINE_GAP:
+            continue
+        key = _quantise(px)
+        counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return None
+    best = max(counts, key=lambda k: counts[k])
+    # A real outline wraps the whole number; a few stray artwork pixels do
+    # not. Require enough of the collar to agree before believing in one.
+    if counts[best] < max(24, int(0.05 * sum(counts.values()))):
+        return None
+    return best
+
+
+def _extend_to_outline(cover, pixels, bg, w, h, radius):
+    """Take in the outline sitting immediately around the fill.
+
+    The bg->ink axis describes a flat digit perfectly and a poster digit only
+    partly: the scores on the user's newer boards are a light fill inside a
+    heavy contrasting outline, which projects to zero on that axis. It was
+    therefore neither erased nor harvested, and the old number's outline
+    stayed on the card as a dark blob behind the new one.
+
+    Absorbing it needs BOTH tests, which is what two earlier attempts got
+    wrong. Colour alone (adding the outline as a second axis) matched the
+    artwork all over a busy card and the erase chewed through the team name
+    and the caption. Position alone (anything not-background within reach)
+    took in half the panel, because on a textured card almost nothing is
+    exactly the background colour. So: within `radius` of real ink, AND close
+    to the one colour that actually wraps the digits. A flat board has no
+    such collar colour and gains nothing at all.
+    """
+    if radius < 1:
+        return cover
+    if not any(cover):
+        return cover
+    outline = _outline_colour(cover, pixels, bg, w, h, radius)
+    if outline is None:
+        return cover
+    seed = bytearray(1 if c else 0 for c in cover)
+    grown = _dilate(seed, w, h, radius)
+    for i in range(w * h):
+        if cover[i] or not grown[i]:
+            continue
+        px = pixels[i]
+        if _colour_gap(px, bg) < OUTLINE_GAP:
+            continue
+        near = _colour_gap(px, outline)
+        if near > OUTLINE_TOLERANCE:
+            continue
+        cover[i] = 255 if near <= OUTLINE_TOLERANCE // 2 else \
+            int(255 * (OUTLINE_TOLERANCE - near) /
+                float(OUTLINE_TOLERANCE - OUTLINE_TOLERANCE // 2))
+    return cover
 
 
 # ---------------------------------------------------------------- geometry
@@ -800,8 +1093,11 @@ def _harvest_box(img, box, index, glyph_dir):
     that style's characters, and later boxes do not overwrite them.
     """
     x0, y0, w, h, pixels = _crop_box(img, box)
-    ink, bg = _sample_colours(_tight_pixels(img, box))
-    cover = _coverage(pixels, ink, bg)
+    inner = _tight_pixels(img, box)
+    ink, bg = _sample_colours(_ring_pixels(img, box), inner)
+    cover = _ink_mask(pixels, ink, bg, w, h, box)
+    _extend_to_outline(cover, pixels, bg, w, h,
+                       _outline_radius(box.get("cap_height") or box["h"]))
     _limit_rows(cover, w, h, *_rect_rows(y0, h, box["y"], box["h"], 0.10))
     segments, top, bottom = _column_segments(cover, w, h, CORE_COVER)
     segments = _widen_segments(cover, w, h, segments, EDGE_COVER)
@@ -861,13 +1157,47 @@ def _harvest_box(img, box, index, glyph_dir):
             if os.path.exists(path):
                 continue
             gw = c1 - c0 + 1
-            glyph = Image.new("RGBA", (gw, cap_height), tuple(ink) + (0,))
-            alpha = Image.frombytes(
-                "L", (gw, cap_height),
-                _rows(cover, w, c0, c1, top, cap_height))
+            alpha_bytes = _rows(cover, w, c0, c1, top, cap_height)
+            alpha = Image.frombytes("L", (gw, cap_height), alpha_bytes)
+            # Keep each pixel's OWN colour, un-mixed back out of the
+            # background it was composited over, rather than flooding the
+            # glyph with one flat ink. That is what carries an outline, a
+            # drop shadow or a gradient across to the new number; a flat
+            # fill would redraw a poster digit as a plain silhouette.
+            glyph = Image.new("RGBA", (gw, cap_height))
+            glyph.putdata(_glyph_colours(pixels, w, c0, c1, top, cap_height,
+                                         alpha_bytes, bg, ink))
             glyph.putalpha(alpha)
             glyph.save(path, format="PNG")
     return record
+
+
+MIN_UNMIX_ALPHA = 24             # below this the division is pure noise
+
+
+def _glyph_colours(pixels, w, c0, c1, top, rows, alpha_bytes, bg, ink):
+    """RGB for a harvested glyph, recovered from the composited pixels.
+
+    A pixel reads px = a*F + (1-a)*bg, so the foreground F it was drawn with
+    is (px - (1-a)*bg) / a. On a barely-covered edge pixel that division
+    amplifies noise, so those keep the box's ink and let alpha do the work.
+    """
+    out = []
+    i = 0
+    for y in range(top, top + rows):
+        base = y * w
+        for x in range(c0, c1 + 1):
+            a = alpha_bytes[i]
+            i += 1
+            if a < MIN_UNMIX_ALPHA:
+                out.append(tuple(ink))
+                continue
+            t = a / 255.0
+            px = pixels[base + x]
+            out.append(tuple(
+                min(255, max(0, int(round((px[c] - (1.0 - t) * bg[c]) / t))))
+                for c in range(3)))
+    return out
 
 
 def _rows(cover, w, c0, c1, top, rows):
@@ -1193,7 +1523,9 @@ def _erase(img, box):
     x0, y0, w, h, pixels = _crop_box(img, box)
     ink = tuple(box["ink"])
     bg = tuple(box["bg"])
-    cover = _coverage(pixels, ink, bg)
+    cover = _ink_mask(pixels, ink, bg, w, h, box)
+    _extend_to_outline(cover, pixels, bg, w, h,
+                       _outline_radius(box.get("cap_height") or box["h"]))
 
     # Only the number's own band may be touched. Without this the erase eats
     # into whatever shares the ink colour just above it — the pink rule under
@@ -1213,34 +1545,72 @@ def _erase(img, box):
     # Dilation must not reach back out of the band either.
     _limit_rows(mask, w, h, *window)
 
-    out = list(pixels)
+    # Nearest clean pixel in FOUR directions, not two. Scanning only up and
+    # down means every masked pixel is replaced from far along its own
+    # column: across a 300px digit that drags one row's colour the whole
+    # height of the glyph, which on a textured or gradient card came out as
+    # hard vertical streaks. Left and right are usually far closer — a stroke
+    # is tens of pixels wide against hundreds tall — so taking whichever of
+    # the four is nearest follows the artwork instead of smearing it.
+    n = w * h
+    big = n + 1
+    best = [0] * n
+    dist = [big] * n
+    rows = [y for y in range(h) if any(mask[y * w:(y + 1) * w])]
+
+    for y in rows:
+        row = y * w
+        last = -1
+        for x in range(w):                      # from the left
+            i = row + x
+            if not mask[i]:
+                last = x
+            elif last >= 0:
+                d = x - last
+                if d < dist[i]:
+                    dist[i] = d
+                    best[i] = row + last
+        last = -1
+        for x in range(w - 1, -1, -1):          # from the right
+            i = row + x
+            if not mask[i]:
+                last = x
+            elif last >= 0:
+                d = last - x
+                if d < dist[i]:
+                    dist[i] = d
+                    best[i] = row + last
+    lo_row, hi_row = (rows[0], rows[-1]) if rows else (0, -1)
     for x in range(w):
-        # Nearest clean row above / below each row in this column.
-        up = [None] * h
-        last = None
-        for y in range(h):
-            if not mask[y * w + x]:
-                last = y
-            up[y] = last
-        down = [None] * h
-        last = None
-        for y in range(h - 1, -1, -1):
-            if not mask[y * w + x]:
-                last = y
-            down[y] = last
-        for y in range(h):
+        last = -1
+        for y in range(lo_row, hi_row + 1):     # from above
             i = y * w + x
             if not mask[i]:
+                last = y
+            elif last >= 0:
+                d = y - last
+                if d < dist[i]:
+                    dist[i] = d
+                    best[i] = last * w + x
+        last = -1
+        for y in range(hi_row, lo_row - 1, -1):  # from below
+            i = y * w + x
+            if not mask[i]:
+                last = y
+            elif last >= 0:
+                d = last - y
+                if d < dist[i]:
+                    dist[i] = d
+                    best[i] = last * w + x
+
+    out = list(pixels)
+    for y in rows:
+        row = y * w
+        for x in range(w):
+            i = row + x
+            if not mask[i]:
                 continue
-            a, b = up[y], down[y]
-            if a is None and b is None:
-                out[i] = bg
-            elif a is None:
-                out[i] = pixels[b * w + x]
-            elif b is None:
-                out[i] = pixels[a * w + x]
-            else:
-                out[i] = pixels[(a if (y - a) <= (b - y) else b) * w + x]
+            out[i] = pixels[best[i]] if dist[i] < big else bg
 
     patch = Image.new("RGB", (w, h))
     patch.putdata(out)
@@ -1285,6 +1655,56 @@ def _stroke_width(mask):
     return float(runs[len(runs) // 2])
 
 
+# Rebuilding each weight from scratch made the stroke search quadratic in the
+# number of steps: every candidate re-rendered the glyph and re-ran |grow| 3x3
+# rank filters over a canvas hundreds of pixels tall. Profiled at 456 filter
+# passes and 7.5s for ONE box, which is ~45s for a six-score board — the app
+# looked hung whenever a value used a digit the board had never shown (change
+# 350 to 900 on the sample board and every digit takes that path). Each weight
+# is one filter pass away from its neighbour, so build them in a chain and
+# keep them: the same search is now 22 passes. The masks are identical.
+_CANVAS_CACHE = {}
+_CANVAS_CACHE_MAX = 512
+
+
+def _font_canvases(char, cap_height, grow):
+    """(all-digits, this-digit) canvases at weight `grow`, memoised.
+
+    Built one dilation/erosion step from its neighbour rather than from the
+    glyph, so walking a range of weights costs one filter pass per step.
+    """
+    key = (char, int(cap_height), int(grow))
+    hit = _CANVAS_CACHE.get(key)
+    if hit is not None:
+        return hit
+
+    if grow == 0:
+        size = max(8, min(int(cap_height * 3), 600))
+        font = fonts.load("digits", size)
+        extent = font.getbbox(DIGIT_SET)
+        # Constant padding, sized for the widest weight we will ever ask for,
+        # so every step in the chain shares one canvas size. Only empty space
+        # is added and the text origin stays at (0, 0), so the cropped result
+        # is byte-for-byte what the old per-grow padding produced.
+        pad = size + 2 * max(MAX_FONT_GROW, MAX_FONT_SHRINK)
+        canvas = (max(1, extent[2] + pad), max(1, extent[3] + pad))
+        every = Image.new("L", canvas, 0)
+        ImageDraw.Draw(every).text((0, 0), DIGIT_SET, font=font, fill=255)
+        one = Image.new("L", canvas, 0)
+        ImageDraw.Draw(one).text((0, 0), char, font=font, fill=255)
+    else:
+        step = grow - 1 if grow > 0 else grow + 1
+        every, one = _font_canvases(char, cap_height, step)
+        kernel = (ImageFilter.MaxFilter(3) if grow > 0
+                  else ImageFilter.MinFilter(3))
+        every, one = every.filter(kernel), one.filter(kernel)
+
+    if len(_CANVAS_CACHE) >= _CANVAS_CACHE_MAX:
+        _CANVAS_CACHE.clear()
+    _CANVAS_CACHE[key] = (every, one)
+    return every, one
+
+
 def _font_mask(char, cap_height, grow):
     """Alpha mask for `char` at `cap_height`, re-weighted `grow` steps first.
 
@@ -1299,21 +1719,7 @@ def _font_mask(char, cap_height, grow):
     BOTH canvases so the band grows with the glyph and alignment is preserved.
     """
     cap_height = max(1, min(int(cap_height), MAX_CAP_HEIGHT))
-    size = max(8, min(int(cap_height * 3), 600))
-    font = fonts.load("digits", size)
-    extent = font.getbbox(DIGIT_SET)
-    pad = size + 2 * abs(grow)
-    canvas_size = (max(1, extent[2] + pad), max(1, extent[3] + pad))
-
-    every = Image.new("L", canvas_size, 0)
-    ImageDraw.Draw(every).text((0, 0), DIGIT_SET, font=font, fill=255)
-    one = Image.new("L", canvas_size, 0)
-    ImageDraw.Draw(one).text((0, 0), char, font=font, fill=255)
-    kernel = ImageFilter.MaxFilter(3) if grow > 0 else ImageFilter.MinFilter(3)
-    for _ in range(abs(grow)):
-        every = every.filter(kernel)
-        one = one.filter(kernel)
-
+    every, one = _font_canvases(char, cap_height, grow)
     band = every.getbbox()
     box = one.getbbox()
     if not band or not box:
@@ -1376,8 +1782,10 @@ def _load_glyph(glyph_dir, styles, style, char, cap_height, ink):
     path can leak another card's colour.
     """
     paths = []
+    own = None
     if style:
-        paths.append(os.path.join(glyph_dir, style, "{0}.png".format(char)))
+        own = os.path.join(glyph_dir, style, "{0}.png".format(char))
+        paths.append(own)
     near = []
     for name, other_ink, other_cap in styles:
         if name == style:
@@ -1401,7 +1809,11 @@ def _load_glyph(glyph_dir, styles, style, char, cap_height, ink):
             continue
         if glyph.height <= 0:
             continue
-        glyph = _tint(glyph, ink)
+        # Retint only what was BORROWED. A glyph harvested from this very
+        # box already carries the right colours — including its outline and
+        # shading — and flattening it to one ink would throw those away.
+        if path != own:
+            glyph = _tint(glyph, ink)
         if abs(glyph.height - cap_height) > 1:
             scale = cap_height / float(glyph.height)
             glyph = glyph.resize(
