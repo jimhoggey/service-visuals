@@ -16,7 +16,7 @@ import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.18.0"
+APP_VERSION = "1.19.0"
 GITHUB_REPO = "jimhoggey/service-visuals"
 
 import io
@@ -27,6 +27,7 @@ from PIL import Image
 
 import aiassist
 import netutil
+import stats
 import updater
 from jobs import JobManager
 from render.encoder import EXPORTS_DIR, UPLOADS_DIR
@@ -36,9 +37,9 @@ from render.qr import (POSITIONS, render_qr, render_qr_image,
                        render_qr_still)
 from render.motionbg import render_motion_bg
 from render.scoreboard import (BOARDS_DIR, BoardError, OCRUnavailable,
-                               create_board, delete_board, export_board,
-                               list_boards, load_board, render_board,
-                               save_values)
+                               add_box, create_board, delete_board,
+                               export_board, list_boards, load_board,
+                               render_board, save_values)
 
 # When frozen by PyInstaller the static files live under the unpack dir.
 _BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
@@ -64,8 +65,19 @@ def _reject_foreign_hosts():
         return jsonify({"error": "Host not allowed."}), 403
 
 
-jobs = JobManager({"timer": render_timer, "spinner": render_spinner,
-                   "qr": render_qr, "motionbg": render_motion_bg})
+def _counted(tool, fn):
+    """Count an export once it has actually produced a file."""
+    def run(options, progress_cb):
+        filename = fn(options, progress_cb)
+        stats.track("export", tool=tool)
+        return filename
+    return run
+
+
+jobs = JobManager({"timer": _counted("timer", render_timer),
+                   "spinner": _counted("spinner", render_spinner),
+                   "qr": _counted("qr", render_qr),
+                   "motionbg": _counted("motionbg", render_motion_bg)})
 
 # NB: matched with .fullmatch() — "$" alone would accept a trailing newline.
 HEX_COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")
@@ -479,7 +491,9 @@ def api_qr_image():
         clean = validate_qr_options(options)
     except ValidationError as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify({"filename": render_qr_image(clean)})
+    filename = render_qr_image(clean)
+    stats.track("export", tool="qr_png")
+    return jsonify({"filename": filename})
 
 
 @app.route("/api/upload-bg", methods=["POST"])
@@ -549,6 +563,7 @@ def api_board_analyse():
     except OCRUnavailable as exc:
         return jsonify({"error": str(exc)}), 400
     except BoardError as exc:
+        stats.track("ocr_failed")
         return jsonify({"error": str(exc)}), 400
     except Exception:
         # Never let an unexpected error answer this route with HTML — the
@@ -559,20 +574,18 @@ def api_board_analyse():
             "and try again.")}), 500
 
     board_id = board.get("id") or board.get("board_id")
-    if not board.get("boxes"):
-        # A board with nothing editable on it is dead weight in the list.
-        try:
-            delete_board(board_id)
-        except Exception:
-            pass
-        return jsonify({"error": "No numbers were found on that image."}), 400
-
+    found = len(board.get("boxes") or [])
+    # Zero found is not a failure any more — the board is kept and the
+    # operator draws the numbers in by hand — but it is worth counting.
+    stats.track("ocr_failed" if not found else "board_created",
+                **({} if not found else {"numbers": found}))
     return jsonify({
         "board_id": board_id,
         "name": board.get("name", name),
         "width": board.get("width"),
         "height": board.get("height"),
         "boxes": board.get("boxes"),
+        "values": board.get("values") or {},
     })
 
 
@@ -645,6 +658,43 @@ def api_board_values(board_id):
     return jsonify(updated)
 
 
+@app.route("/api/board/<board_id>/boxes", methods=["POST"])
+def api_board_add_box(board_id):
+    """Make a number OCR missed editable: {"rect": {x,y,w,h}, "text": "350"}.
+
+    Rect is in source-image pixels (the UI converts from its scaled overlay).
+    """
+    if request.content_length and request.content_length > MAX_JSON_BYTES:
+        return jsonify({"error": "Request too large."}), 413
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": (
+            'The request body must be JSON like {"rect": {...}, "text": "350"}.'
+        )}), 400
+    rect = data.get("rect")
+    if not isinstance(rect, dict):
+        return jsonify({"error": "Send the box as {x, y, w, h}."}), 400
+    try:
+        _board_id_field(board_id)
+        clean = {k: _int_field(rect, k, 0, 20000, None, "The box " + k)
+                 for k in ("x", "y", "w", "h")}
+    except ValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    text = data.get("text")
+    if not isinstance(text, str):
+        return jsonify({"error": "Type the number as it appears on the board."}), 400
+    try:
+        board = add_box(board_id, clean, text.strip())
+    except BoardError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        app.logger.exception("add box failed")
+        return jsonify({"error": (
+            "That number couldn't be added. Try drawing the box again.")}), 500
+    stats.track("board_number_added")
+    return jsonify(board)
+
+
 @app.route("/api/board/<board_id>/preview", methods=["POST"])
 def api_board_preview(board_id):
     """Re-render the board with its saved values and hand back the PNG, so the
@@ -685,6 +735,7 @@ def api_board_export(board_id):
         filename = export_board(board)
     except BoardError as exc:
         return jsonify({"error": str(exc)}), 400
+    stats.track("export", tool="scoreboard")
     return jsonify({"filename": filename})
 
 
@@ -772,6 +823,7 @@ def api_ai_generate():
             description, count, existing, model, full)
     except aiassist.AiError as exc:
         return jsonify({"error": str(exc)}), 400
+    stats.track("ai_fill")
     return jsonify({"entries": entries})
 
 
@@ -827,7 +879,45 @@ def api_update_check():
                     "latest": _update["latest"],
                     "update_available": _update["available"],
                     "check_failed": bool(_update.get("error")),
-                    "can_self_install": bool(getattr(sys, "frozen", False))})
+                    "can_self_install": bool(getattr(sys, "frozen", False)),
+                    "last_install": _last_install_result()})
+
+
+# The outcome of the previous self-update, read once at boot. A Windows user
+# sat on v1.14 while the app said "RESTARTING…" and came back unchanged; this
+# is how the app now admits that, and how it can offer the log.
+_last_install = {"read": False, "result": None}
+
+
+def _last_install_result():
+    if not _last_install["read"]:
+        _last_install["read"] = True
+        result = updater.take_result(APP_VERSION)
+        if result is not None:
+            if result.get("ok"):
+                stats.track("update_installed")
+            else:
+                stats.track("update_failed",
+                            reason=result.get("reason") or "unknown")
+        _last_install["result"] = result
+    result, _last_install["result"] = _last_install["result"], None
+    return result
+
+
+@app.route("/api/update-log")
+def api_update_log():
+    return jsonify({"log": updater.read_log()})
+
+
+@app.route("/api/stats", methods=["GET", "POST"])
+def api_stats():
+    """Anonymous usage counts on/off. See stats.py for what is (not) sent."""
+    if request.method == "POST":
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or not isinstance(data.get("enabled"), bool):
+            return jsonify({"error": 'Send {"enabled": true|false}.'}), 400
+        stats.set_enabled(data["enabled"])
+    return jsonify({"enabled": stats.enabled(), "events": list(stats.EVENTS)})
 
 
 @app.route("/api/open-release", methods=["POST"])
@@ -854,6 +944,10 @@ def _do_install(url):
                          lambda p: _install_state.update(pct=p))
         _install_state.update(state="staging")
         staged = updater.stage(zip_path, workdir)
+        # Written BEFORE the helper runs: if the swap fails after we exit,
+        # the next launch finds this, sees it is still the old version, and
+        # tells the user instead of silently pretending nothing happened.
+        updater.mark_pending(APP_VERSION, _update.get("latest") or "")
         updater.spawn_replacer(staged, updater.install_root(), workdir)
         _install_state.update(state="restarting")
         threading.Timer(1.5, os._exit, args=(0,)).start()
@@ -928,6 +1022,8 @@ def api_reveal():
 
 def prepare_exports_dir():
     os.makedirs(EXPORTS_DIR, exist_ok=True)
+    updater.sweep_backups()
+    stats.start(APP_VERSION)
     # Sweep leftovers from renders that a killed server never finished.
     for leftover in os.listdir(EXPORTS_DIR):
         if leftover.endswith(".part"):

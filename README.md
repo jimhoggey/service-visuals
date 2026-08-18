@@ -32,7 +32,18 @@ Exported MP4s are saved to **Documents → Service Visuals**.
 
 **Updates install themselves.** When a new version is released, an amber
 UPDATE pill appears in the header — click **INSTALL** and the app downloads
-the new version, swaps itself out, and restarts. No manual reinstalling.
+the new version, swaps itself out, and restarts. No manual reinstalling. If a
+swap ever fails, the app says so on its next launch (and keeps a log at
+`~/.service-visuals/update.log`) instead of quietly staying on the old version.
+
+**Anonymous usage counts.** So we can see which tools actually get used, the
+app sends a tiny anonymous event when a visual is exported — just the event
+name (e.g. `export`, `scoreboard`), the app version and the operating system.
+Nothing you type, upload, name or link is ever sent, there is no user or device
+ID, and it can't be traced back to a person or a church. It goes to
+[Aptabase](https://aptabase.com/) (open source, privacy-first). Turn it off any
+time with the **ANONYMOUS USAGE COUNTS** switch in the footer. The full list of
+events lives in [`stats.py`](stats.py).
 
 ## Using it
 
@@ -63,7 +74,9 @@ the new version, swaps itself out, and restarts. No manual reinstalling.
      reusable board. Each week: open it, click a number, type the new score,
      export. The PNG is identical to your original except for the digits you
      changed — the new digits are lifted from the image itself, so they match the
-     original font exactly.
+     original font exactly. If the recogniser misses a number (it happens more
+     on Windows than on Mac), click **ADD A NUMBER** and drag a box around it —
+     it becomes editable like the rest.
 2. Hit **Export**. The video renders locally.
 3. Hit **Reveal in Finder** (Mac) / **Show in Explorer** (Windows) — it
    selects the exported file so you can drag it straight into a ProPresenter

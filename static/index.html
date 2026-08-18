@@ -252,7 +252,6 @@
               <p class="done-filename" id="timer-filename"></p>
               <div class="btn-row">
                 <button class="btn btn-accent reveal-btn" id="timer-reveal" type="button">SHOW FILE</button>
-                <button class="btn" id="timer-again" type="button">MAKE ANOTHER</button>
               </div>
             </div>
           </div>
@@ -427,7 +426,6 @@
               <p class="done-filename" id="spinner-filename"></p>
               <div class="btn-row">
                 <button class="btn btn-accent reveal-btn" id="spinner-reveal" type="button">SHOW FILE</button>
-                <button class="btn" id="spinner-again" type="button">MAKE ANOTHER</button>
               </div>
             </div>
           </div>
@@ -574,7 +572,6 @@
               <p class="done-filename" id="qr-filename"></p>
               <div class="btn-row">
                 <button class="btn btn-accent reveal-btn" id="qr-reveal" type="button">SHOW FILE</button>
-                <button class="btn" id="qr-again" type="button">MAKE ANOTHER</button>
               </div>
             </div>
           </div>
@@ -687,7 +684,6 @@
               <p class="done-filename" id="motionbg-filename"></p>
               <div class="btn-row">
                 <button class="btn btn-accent reveal-btn" id="motionbg-reveal" type="button">SHOW FILE</button>
-                <button class="btn" id="motionbg-again" type="button">MAKE ANOTHER</button>
               </div>
             </div>
           </div>
@@ -712,6 +708,10 @@
         <label class="btn btn-file" for="board-file">CHOOSE IMAGE&#8230;</label>
         <input class="vh" type="file" id="board-file" accept="image/png,image/jpeg">
         <span class="bg-name" id="board-file-name">No image chosen</span>
+        <span class="board-reading" id="board-reading" role="status" hidden>
+          <span class="board-reading-spin" aria-hidden="true"></span>
+          <span id="board-reading-text">READING THE NUMBERS&#8230;</span>
+        </span>
       </div>
       <p class="hint" id="board-upload-hint">PNG or JPG. It's read once &#8212; every number on it
         becomes editable, and the board is saved so you only do this the first time.</p>
@@ -737,12 +737,30 @@
         <div class="panel preview-panel">
           <div class="board-stage" id="board-stage">
             <img id="board-img" class="board-img" alt="Your points screen &#8212; click a number to change it">
-            <div class="board-busy" id="board-busy" hidden>UPDATING&#8230;</div>
+            <div class="board-busy" id="board-busy" hidden>
+              <span id="board-busy-text">UPDATING THE PICTURE&#8230;</span>
+              <div class="board-busy-track"><div class="board-busy-fill"></div></div>
+            </div>
           </div>
           <div class="preview-meta">
-            <p class="preview-caption">CLICK A NUMBER TO CHANGE IT &#8212; ENTER TO KEEP, ESC TO UNDO</p>
+            <p class="preview-caption" id="board-caption">CLICK A NUMBER TO CHANGE IT &#8212; ENTER TO KEEP, ESC TO UNDO</p>
             <p class="spec-line" id="board-count"></p>
           </div>
+          <p class="board-none" id="board-none" hidden>
+            No numbers were picked out automatically. Click <strong>ADD A NUMBER</strong>
+            and drag a box around each score on the picture.
+          </p>
+          <div class="board-tools">
+            <button type="button" class="btn" id="board-add">&#43; ADD A NUMBER</button>
+            <span class="hint" id="board-add-hint">Missed one? Drag a box around it.</span>
+          </div>
+          <form class="board-add-form" id="board-add-form" hidden>
+            <label for="board-add-value">WHAT DOES IT SAY NOW?</label>
+            <input type="text" id="board-add-value" inputmode="numeric" maxlength="6"
+                   autocomplete="off" spellcheck="false" placeholder="350">
+            <button type="submit" class="btn btn-accent">ADD</button>
+            <button type="button" class="btn" id="board-add-cancel">CANCEL</button>
+          </form>
         </div>
 
         <button class="btn-export" id="board-export" type="button">EXPORT PNG</button>
@@ -761,7 +779,6 @@
           <p class="done-filename" id="board-filename"></p>
           <div class="btn-row">
             <button class="btn btn-accent reveal-btn" id="board-reveal" type="button">SHOW FILE</button>
-            <button class="btn" id="board-again" type="button">MAKE ANOTHER</button>
           </div>
         </div>
       </div>
@@ -782,6 +799,11 @@
   </button>
   <button type="button" class="btn btn-check" id="check-updates">CHECK FOR UPDATES</button>
   <span class="update-note" id="update-note" role="status"></span>
+  <label class="stats-toggle" id="stats-toggle" hidden
+         title="Sends only which tool was used, the app version and the operating system. Never what you typed, your images, files or names.">
+    <input type="checkbox" id="stats-enabled">
+    <span>ANONYMOUS USAGE COUNTS</span>
+  </label>
 </footer>
 
 </body>

@@ -25,7 +25,7 @@ This is a local edit, not image generation. Three things make it convincing:
   rounded edges and shadows survive untouched.
 
 Public surface used by app.py: OCRUnavailable, BoardError, BOARDS_DIR,
-detect_numbers, create_board, load_board, list_boards, save_values,
+detect_numbers, create_board, add_box, load_board, list_boards, save_values,
 delete_board, render_board, export_board.
 """
 
@@ -228,36 +228,126 @@ def _detect_windows(img):
             "recognition can read ({1}px). Export the board at a smaller "
             "size and try again.".format(max(width, height), limit))
 
-    try:
-        result = winocr.recognize_pil_sync(img, "en")
-    except Exception as exc:
-        raise OCRUnavailable(
-            "OCR isn't available on this system. Windows text recognition "
-            "failed ({0}).".format(exc))
-
-    _reject_tilt((result or {}).get("text_angle"))
-
+    # Windows.Media.Ocr is a document engine. Pointed at a points board — a
+    # handful of very large, light digits on saturated cards — it is far less
+    # sure of itself than Vision: on the same image where macOS found all six
+    # scores it returned four. Its two failure modes are predictable, though:
+    # it drops words at a scale it dislikes, and it reads a light "0"/"1"/"5"
+    # as the letters O/I/S. So it gets several looks at the picture (native,
+    # scaled to a document-like size, and inverted so the digits are dark on
+    # light) and every read is unioned; lookalike letters inside otherwise
+    # numeric words are mapped back to digits. Each pass costs ~100-300 ms.
+    passes = _windows_passes(img, limit)
     boxes = []
-    # Word-level boxes, never line-level: a line box would swallow "350" plus
-    # whatever sits beside it, and we need the number on its own.
+    for index, (variant, scale) in enumerate(passes):
+        try:
+            result = winocr.recognize_pil_sync(variant, "en")
+        except Exception as exc:
+            if index == 0:
+                # The plain read failing means the engine itself is broken;
+                # a variant failing later is just one fewer look.
+                raise OCRUnavailable(
+                    "OCR isn't available on this system. Windows text "
+                    "recognition failed ({0}).".format(exc))
+            continue
+        if index == 0:
+            _reject_tilt((result or {}).get("text_angle"))
+        boxes.extend(_windows_words(result, scale, width, height))
+
+    merged = _merge_word_boxes(_dedupe_boxes(boxes))
+    return [b for b in merged if VALUE_RE.match(b["text"])]
+
+
+# Letters Windows OCR substitutes for light digits. Applied only to a word
+# that already contains at least one real digit, so "SO" stays a word and
+# "35O" becomes 350.
+_LOOKALIKES = {"O": "0", "o": "0", "Q": "0", "D": "0", "I": "1", "l": "1",
+               "|": "1", "S": "5", "s": "5", "B": "8", "Z": "2", "z": "2",
+               "g": "9"}
+_LOOKALIKE_RE = re.compile(r"^[0-9OoQDIl|SsBZzg]+$")
+
+
+def _normalise_word(text):
+    text = str(text or "").strip().replace(",", "").replace(".", "")
+    if ASCII_DIGITS_RE.match(text):
+        return text
+    if _LOOKALIKE_RE.match(text) and any(c.isdigit() for c in text):
+        return "".join(_LOOKALIKES.get(c, c) for c in text)
+    return ""
+
+
+def _windows_passes(img, limit):
+    """(image, scale) variants to OCR; the first is always the original."""
+    width, height = img.size
+    passes = [(img, 1.0)]
+    # A document-sized rendition: the engine is happiest around 1000-1600px.
+    for target in (1200, 800):
+        scale = target / float(max(width, height))
+        if 0.3 < scale < 0.95 or 1.05 < scale < 2.5:
+            new = (max(1, int(round(width * scale))),
+                   max(1, int(round(height * scale))))
+            if limit and max(new) > limit:
+                continue
+            passes.append((img.resize(new, _LANCZOS), scale))
+    # Dark digits on a light ground is what the engine was trained on.
+    try:
+        from PIL import ImageOps
+        passes.append((ImageOps.invert(img.convert("RGB")), 1.0))
+    except Exception:
+        pass
+    return passes
+
+
+def _windows_words(result, scale, width, height):
+    """Numeric word boxes from one OcrResult, mapped back to source pixels.
+
+    Word-level boxes, never line-level: a line box would swallow "350" plus
+    whatever sits beside it, and we need the number on its own. Length is
+    checked AFTER merging: a tracked "3 5 0" arrives as three one-character
+    words.
+    """
+    boxes = []
     for line in (result or {}).get("lines", []) or []:
         for word in (line or {}).get("words", []) or []:
-            text = str((word or {}).get("text", "")).strip()
-            # Length is checked AFTER merging: a tracked "3 5 0" arrives as
-            # three one-character words.
-            if not ASCII_DIGITS_RE.match(text):
+            text = _normalise_word((word or {}).get("text", ""))
+            if not text:
                 continue
             r = (word or {}).get("bounding_rect") or {}
             try:
-                rect = _clip_rect(round(r["x"]), round(r["y"]),
-                                  round(r["width"]), round(r["height"]),
+                rect = _clip_rect(round(r["x"] / scale), round(r["y"] / scale),
+                                  round(r["width"] / scale),
+                                  round(r["height"] / scale),
                                   width, height)
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, ZeroDivisionError):
                 continue
             if rect:
                 rect["text"] = text
                 boxes.append(rect)
-    return [b for b in _merge_word_boxes(boxes) if VALUE_RE.match(b["text"])]
+    return boxes
+
+
+def _iou(a, b):
+    x0 = max(a["x"], b["x"]); y0 = max(a["y"], b["y"])
+    x1 = min(a["x"] + a["w"], b["x"] + b["w"])
+    y1 = min(a["y"] + a["h"], b["y"] + b["h"])
+    inter = max(0, x1 - x0) * max(0, y1 - y0)
+    if not inter:
+        return 0.0
+    return inter / float(a["w"] * a["h"] + b["w"] * b["h"] - inter)
+
+
+def _dedupe_boxes(boxes, threshold=0.5):
+    """Union several OCR passes: keep one box per place on the image.
+
+    Earlier passes win (the native-scale read has the truest rect); a later
+    pass only contributes boxes that overlap nothing kept so far.
+    """
+    kept = []
+    for box in boxes:
+        if any(_iou(box, k) > threshold for k in kept):
+            continue
+        kept.append(box)
+    return kept
 
 
 # Windows de-skews before recognising, so anything past a fraction of a degree
@@ -855,7 +945,7 @@ def load_board(board_id):
     except (OSError, ValueError):
         raise BoardError("That board couldn't be opened — it may have been "
                          "deleted.")
-    if not isinstance(board, dict) or not board.get("boxes"):
+    if not isinstance(board, dict) or not isinstance(board.get("boxes"), list):
         raise BoardError("That board file is damaged. Upload the image again "
                          "to rebuild it.")
     board["id"] = board_id
@@ -900,10 +990,10 @@ def create_board(pil_image, name, boxes=None):
     else:
         boxes = _reading_order(
             [dict(b, **_require_rect(b, img.width, img.height)) for b in boxes])
-    if not boxes:
-        raise BoardError(
-            "No numbers were found in that image. Make sure the picture is "
-            "the full points board and the numbers are clear and upright.")
+    # An empty result is NOT an error any more: OCR recall differs by
+    # platform (Windows found four of six on a board macOS reads perfectly),
+    # so the board is saved anyway and the operator marks the numbers by
+    # hand with add_box. The UI says so plainly.
     if len(boxes) > MAX_BOXES:
         raise BoardError(
             "That image has {0} separate numbers on it, more than a points "
@@ -984,6 +1074,65 @@ def save_values(board_id, values_dict, name=None):
         board["updated"] = _now()
         _write_board(board)
         return board
+
+
+def add_box(board_id, rect, text):
+    """Make one more number editable: a rect the operator drew, and what it
+    currently reads. Harvests its glyphs from the saved source image exactly
+    as create_board would have. Returns the updated board.
+
+    This is the universal answer to imperfect OCR — no engine finds every
+    number on every board, and a missed one must never be a dead end.
+    """
+    text = str(text or "").strip()
+    if not VALUE_RE.match(text):
+        raise BoardError(
+            "Type the number as it appears on the board — digits only, "
+            "1 to {0} of them.".format(MAX_VALUE_LEN))
+    with _BOARD_LOCK:
+        board = load_board(board_id)
+        directory = _board_dir(board_id)
+        try:
+            img = Image.open(os.path.join(directory, "source.png")).convert("RGB")
+        except (OSError, ValueError):
+            raise BoardError("That board's picture is missing. Upload the "
+                             "image again to rebuild it.")
+        box = dict(_require_rect(dict(rect or {}, text=text),
+                                 img.width, img.height), text=text)
+        if box["w"] < 4 or box["h"] < 4:
+            raise BoardError("Drag a box that covers the whole number.")
+        boxes = board.get("boxes") or []
+        for other in boxes:
+            if _iou(box, other) > 0.5:
+                raise BoardError("That number is already editable.")
+        if len(boxes) >= MAX_BOXES:
+            raise BoardError("This board already has as many editable "
+                             "numbers as it can hold ({0}).".format(MAX_BOXES))
+        # Ids must stay unique across deletions, so count up from the
+        # highest existing one rather than from len(boxes).
+        highest = -1
+        for other in boxes:
+            m = re.match(r"^b(\d+)$", str(other.get("id", "")))
+            if m:
+                highest = max(highest, int(m.group(1)))
+        glyph_dir = os.path.join(directory, "glyphs")
+        record = _harvest_box(img, box, highest + 1, glyph_dir)
+        record["manual"] = True
+        # New glyphs may have landed in a style folder whose stroke weight
+        # was cached as "nothing here yet" — forget what we measured there.
+        for key in [k for k in _STROKE_CACHE if str(k[0]).startswith(glyph_dir)]:
+            _STROKE_CACHE.pop(key, None)
+        boxes.append(record)
+        board["boxes"] = _reading_order_records(boxes)
+        board.setdefault("values", {})[record["id"]] = text
+        board["updated"] = _now()
+        _write_board(board)
+        return board
+
+
+def _reading_order_records(records):
+    """Reading order for full box records (same rule as _reading_order)."""
+    return _reading_order(records)
 
 
 def rename_board(board_id, name):

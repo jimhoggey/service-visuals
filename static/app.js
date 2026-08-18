@@ -138,11 +138,32 @@
         } else if (manual) {
           $("update-note").textContent = "You're up to date.";
         }
+        // After the pill is set, so a failed-update notice wins over the
+        // plain "update available" wording it would otherwise be given.
+        if (j && j.last_install) reportLastInstall(j.last_install);
       })
       .catch(function () {
         if (manual) $("update-note").textContent = "Couldn't reach GitHub.";
         /* otherwise stay quiet — offline is fine */
       });
+  }
+
+  // The previous self-update's outcome, delivered once on the first check
+  // after a restart. Success is a quiet footer note; failure is said out
+  // loud in the header, because the alternative was a user stuck four
+  // versions back watching "RESTARTING…" do nothing.
+  function reportLastInstall(r) {
+    if (r.ok) {
+      $("update-note").textContent = "Updated to " + (r.version ? "v" + r.version : "the latest version") + ".";
+      return;
+    }
+    $("update-text").textContent = "UPDATE TO V" + (r.expected || "?") + " DID NOT APPLY";
+    $("update-get").textContent = "RETRY";
+    $("update-pill").hidden = false;
+    $("update-dismiss").hidden = false;
+    $("update-note").textContent =
+      "The last update downloaded but the app came back as v" + (r.current || "?") +
+      ". Try again, or download it from the Releases page.";
   }
 
   function startSelfInstall() {
@@ -169,14 +190,29 @@
       .catch(function () { $("update-get").disabled = false; });
   }
 
+  // The raw download percentage arrives in 256 KB lumps at whatever pace the
+  // network delivers, so on a fast line it visibly jumps (3% -> 19% -> 20%
+  // -> 41%). Show a value that eases toward the real one instead: it climbs
+  // a fixed fraction of the remaining gap each tick, never runs ahead of the
+  // truth, and snaps to 100 when the download is done.
+  var shownPct = 0;
+
+  function easedPct(real) {
+    if (real >= 100) { shownPct = 100; return 100; }
+    if (real < shownPct) shownPct = real;          // a fresh install restarts
+    shownPct += (real - shownPct) * 0.35;
+    return Math.floor(shownPct);
+  }
+
   function watchInstall() {
     $("update-dismiss").hidden = true;
+    shownPct = 0;
     var poll = setInterval(function () {
       fetch("/api/update-status", { cache: "no-store" })
         .then(function (r) { return r.json(); })
         .then(function (s) {
           if (s.state === "downloading") {
-            $("update-text").textContent = "DOWNLOADING " + (s.pct || 0) + "%";
+            $("update-text").textContent = "DOWNLOADING " + easedPct(s.pct || 0) + "%";
           } else if (s.state === "staging") {
             $("update-text").textContent = "PREPARING…";
           } else if (s.state === "restarting") {
@@ -194,7 +230,7 @@
           $("update-text").textContent = "RESTARTING…";
           clearInterval(poll);
         });
-    }, 500);
+    }, 250);
   }
 
   // ----------------------------------------------------------------- views
@@ -209,10 +245,8 @@
   function showView(id) {
     VIEWS.forEach(function (v) { $(v).hidden = (v !== id); });
     window.scrollTo(0, 0);
-    // Returning to a config view must present a usable form. After an export
-    // the fieldset is left disabled (only "Make another" re-enabled it), so
-    // re-entering would show locked fields — clear that state on entry unless
-    // a render for this kind is actually in flight.
+    // Returning to a config view presents a clean form: hide a stale
+    // progress/done panel from last time unless a render is in flight.
     var kind = VIEW_KIND[id];
     if (kind && !pollHandles[kind]) clearExportState(kind);
     var title = document.querySelector("#" + id + " .view-title");
@@ -368,7 +402,7 @@
     var durationErr = validateTimerDuration();
     var holdErr = validateTimerHold();
     var err = durationErr || holdErr;
-    $("timer-export").disabled = !!err;
+    $("timer-export").disabled = exportBusy["timer"] || (!!err);
     var hint = $("timer-duration-hint");
     hint.textContent = durationErr || "5 seconds to 120 minutes";
     hint.classList.toggle("is-bad", !!durationErr);
@@ -748,7 +782,7 @@
     updateCountBadge(entries.length);
     rebuildWinnerSelect(entries);
     $("spinner-winner-row").hidden = (spinnerMode() !== "choose");
-    $("spinner-export").disabled = !!validateSpinner();
+    $("spinner-export").disabled = exportBusy["spinner"] || (!!validateSpinner());
     $("spinner-test").disabled = spin.animating || entries.length < 2 || entries.length > 100;
     updateSpinnerTimeline();
     drawSpinnerPreview();
@@ -1027,8 +1061,8 @@
 
   function updateQr() {
     var err = validateQr();
-    $("qr-export").disabled = !!err;
-    $("qr-export-png").disabled = !!err;
+    $("qr-export").disabled = exportBusy["qr"] || (!!err);
+    $("qr-export-png").disabled = exportBusy["qr"] || (!!err);
     var hint = $("qr-url-hint");
     var urlErr = null;
     var url = $("qr-url").value.trim();
@@ -1228,7 +1262,7 @@
 
   function updateMotionBg() {
     var err = validateMotionBg();
-    $("motionbg-export").disabled = !!err;
+    $("motionbg-export").disabled = exportBusy["motionbg"] || (!!err);
     var dHint = $("motionbg-duration-hint");
     var d = intFrom($("motionbg-duration"));
     var dErr = (d === null || d < 5 || d > 30) ? "5 to 30 seconds only." : null;
@@ -1315,7 +1349,7 @@
 
       var hit = document.createElement("button");
       hit.type = "button";
-      hit.className = "board-hit";
+      hit.className = "board-hit" + (box.manual ? " is-manual" : "");
       hit.setAttribute("aria-label", boardBoxLabel(box));
 
       var input = document.createElement("input");
@@ -1513,17 +1547,169 @@
     var img = $("board-img");
     img.style.aspectRatio = (board.width && board.height)
       ? (board.width + " / " + board.height) : "";
+    stopBoardDraw();
+    // Boxes are laid out as percentages of the image, so they can be placed
+    // now; but the editor is revealed only when the picture has decoded, so
+    // the operator sees the whole thing at once, boxes and all.
+    var id = board.id;
+    var reveal = function () {
+      if (board.id !== id) return;
+      renderBoardBoxes();
+      $("board-picker").hidden = true;
+      $("board-editor").hidden = false;
+      clearExportState("board");
+    };
+    img.onload = reveal;
+    img.onerror = reveal;
     img.src = "/api/board/" + encodeURIComponent(board.id) + "/source.png";
-    renderBoardBoxes();
+    if (img.complete && img.naturalWidth) reveal();
+  }
 
-    $("board-picker").hidden = true;
-    $("board-editor").hidden = false;
-    clearExportState("board");
+  // ---- add a number by hand ---------------------------------------------
+  // OCR recall is not the same on every machine (Windows found four of the
+  // six scores on a board macOS reads perfectly), so a missed number must
+  // never be a dead end: the operator drags a box over it and types what it
+  // currently says. The server harvests its digits exactly as it would have.
+
+  var draw = { on: false, x0: 0, y0: 0, rect: null, el: null };
+
+  function stageRect(evt) {
+    var stage = $("board-stage").getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (evt.clientX - stage.left) / stage.width)),
+      y: Math.max(0, Math.min(1, (evt.clientY - stage.top) / stage.height))
+    };
+  }
+
+  function startBoardDraw() {
+    if (!board.id) return;
+    draw.on = true;
+    draw.rect = null;
+    $("board-stage").classList.add("is-drawing");
+    $("board-add").classList.add("is-on");
+    $("board-add-form").hidden = true;
+    $("board-caption").textContent = "DRAG A BOX AROUND THE NUMBER — ESC TO CANCEL";
+    $("board-add-hint").textContent = "Drag on the picture: from one corner of the number to the other.";
+  }
+
+  function stopBoardDraw() {
+    draw.on = false;
+    draw.rect = null;
+    if (draw.el && draw.el.parentNode) draw.el.parentNode.removeChild(draw.el);
+    draw.el = null;
+    $("board-stage").classList.remove("is-drawing");
+    $("board-add").classList.remove("is-on");
+    $("board-add-form").hidden = true;
+    $("board-caption").textContent = "CLICK A NUMBER TO CHANGE IT — ENTER TO KEEP, ESC TO UNDO";
+    $("board-add-hint").textContent = "Missed one? Drag a box around it.";
+  }
+
+  function boardDrawDown(evt) {
+    if (!draw.on || evt.button !== 0) return;
+    evt.preventDefault();
+    var p = stageRect(evt);
+    draw.x0 = p.x; draw.y0 = p.y;
+    if (!draw.el) {
+      draw.el = document.createElement("div");
+      draw.el.className = "board-draft";
+      $("board-stage").appendChild(draw.el);
+    }
+    draw.rect = { x: p.x, y: p.y, w: 0, h: 0 };
+    paintDraft();
+    $("board-stage").setPointerCapture && $("board-stage").setPointerCapture(evt.pointerId);
+  }
+
+  function boardDrawMove(evt) {
+    if (!draw.on || !draw.rect || evt.buttons === 0) return;
+    var p = stageRect(evt);
+    draw.rect = {
+      x: Math.min(draw.x0, p.x), y: Math.min(draw.y0, p.y),
+      w: Math.abs(p.x - draw.x0), h: Math.abs(p.y - draw.y0)
+    };
+    paintDraft();
+  }
+
+  function boardDrawUp(evt) {
+    if (!draw.on || !draw.rect) return;
+    boardDrawMove(evt);
+    var px = draftPixels();
+    if (!px || px.w < 6 || px.h < 6) {
+      // A click, not a drag — keep drawing mode on and wait for a real box.
+      draw.rect = null;
+      paintDraft();
+      return;
+    }
+    $("board-add-form").hidden = false;
+    $("board-add-value").value = "";
+    $("board-add-value").focus();
+  }
+
+  function paintDraft() {
+    if (!draw.el) return;
+    if (!draw.rect) { draw.el.style.display = "none"; return; }
+    draw.el.style.display = "";
+    draw.el.style.left = (draw.rect.x * 100) + "%";
+    draw.el.style.top = (draw.rect.y * 100) + "%";
+    draw.el.style.width = (draw.rect.w * 100) + "%";
+    draw.el.style.height = (draw.rect.h * 100) + "%";
+  }
+
+  function draftPixels() {
+    if (!draw.rect || !board.width || !board.height) return null;
+    return {
+      x: Math.round(draw.rect.x * board.width),
+      y: Math.round(draw.rect.y * board.height),
+      w: Math.round(draw.rect.w * board.width),
+      h: Math.round(draw.rect.h * board.height)
+    };
+  }
+
+  function submitBoardAdd(evt) {
+    evt.preventDefault();
+    var px = draftPixels();
+    var text = $("board-add-value").value.replace(/\s+/g, "");
+    if (!px) return;
+    if (!/^\d{1,6}$/.test(text)) {
+      showError("board", "Type the number as it appears on the board — digits only, 1 to 6 of them.");
+      $("board-add-value").focus();
+      return;
+    }
+    hideError("board");
+    var id = board.id;
+    fetch("/api/board/" + encodeURIComponent(id) + "/boxes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rect: px, text: text })
+    })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          if (!r.ok) {
+            var e = new Error("reject");
+            e.userMessage = (j && j.error) || "That number couldn't be added.";
+            throw e;
+          }
+          return j;
+        });
+      })
+      .then(function (j) {
+        if (board.id !== id) return;
+        board.boxes = Array.isArray(j.boxes) ? j.boxes : board.boxes;
+        board.values = (j.values && typeof j.values === "object") ? j.values : board.values;
+        stopBoardDraw();
+        renderBoardBoxes();
+        updateBoard();
+      })
+      .catch(function (err) {
+        showError("board", (err && err.userMessage) ||
+          "That number couldn't be added — is the server still running?");
+        $("board-add-value").focus();
+      });
   }
 
   function closeBoard() {
     flushBoardSave();
     releaseBoardPreview();
+    stopBoardDraw();
     board.id = null;
     board.name = "";
     board.width = 0;
@@ -1626,9 +1812,15 @@
       });
   }
 
+  function setBoardReading(on, text) {
+    $("board-reading").hidden = !on;
+    $("board-file-name").hidden = !!on;
+    if (text) $("board-reading-text").textContent = text;
+  }
+
   function uploadBoard(file) {
     hideError("board");
-    $("board-file-name").textContent = "Reading the numbers off it…";
+    setBoardReading(true, "READING THE NUMBERS…");
     var fd = new FormData();
     fd.append("image", file);
     fd.append("name", file.name.replace(/\.[^.]+$/, "").slice(0, 60) || "Points board");
@@ -1641,17 +1833,22 @@
       .then(function (res) {
         $("board-file").value = "";
         $("board-file-name").textContent = "No image chosen";
+        setBoardReading(false);
         if (!res.ok || !(res.j && (res.j.board_id || res.j.id))) {
           showError("board", (res.j && res.j.error) ||
             "Could not read that image.");
           return;
         }
+        // Wait for the picture itself before showing the editor, so the
+        // image and every box land together rather than boxes trickling in
+        // over an empty frame.
         applyBoard(res.j);
         refreshBoardList();
       })
       .catch(function () {
         $("board-file").value = "";
         $("board-file-name").textContent = "No image chosen";
+        setBoardReading(false);
         showError("board", "Could not upload the image — is the server still running?");
       });
   }
@@ -1720,11 +1917,12 @@
 
   function updateBoard() {
     var open = !!board.id;
-    $("board-export").disabled = !open;
+    $("board-export").disabled = exportBusy["board"] || (!open);
     var n = board.boxes.length;
     $("board-count").textContent = open
       ? (n === 1 ? "1 EDITABLE NUMBER" : n + " EDITABLE NUMBERS")
       : "";
+    $("board-none").hidden = !open || n > 0;
   }
 
   function enterBoardView() {
@@ -1741,8 +1939,20 @@
     qr: updateQr, motionbg: updateMotionBg, board: updateBoard
   };
 
+  // Exporting used to disable the whole fieldset until "Make another" was
+  // pressed. Exports are fast now (GPU on Windows, seconds on Mac) and the
+  // operator's next move is almost always "tweak and export again", so the
+  // form stays live throughout: only the export button(s) for that view are
+  // held while its job is in flight, to stop a double-submit.
   function setFormDisabled(kind, disabled) {
-    $(kind + "-fields").disabled = disabled;
+    exportBusy[kind] = !!disabled;
+    exportButtons(kind).forEach(function (b) { b.disabled = !!disabled; });
+  }
+
+  var exportBusy = {};
+
+  function exportButtons(kind) {
+    return [$(kind + "-export"), $(kind + "-export-png")].filter(Boolean);
   }
 
   function showError(kind, message) {
@@ -1855,6 +2065,8 @@
     $(kind + "-reveal").dataset.filename = filename;
     $(kind + "-done").hidden = false;
     addSessionExport(kind, filename);
+    setFormDisabled(kind, false);
+    updaters[kind]();
     $(kind + "-reveal").focus();
   }
 
@@ -1874,11 +2086,6 @@
     setProgress(kind, 0);
     setFormDisabled(kind, false);
     updaters[kind]();
-  }
-
-  function resetExport(kind) {
-    clearExportState(kind);
-    $(kind + "-export").focus();
   }
 
   function revealInFinder(kind) {
@@ -1983,7 +2190,6 @@
     if (err) { showError("timer", err); return; }
     startExport("timer", timerPayload());
   });
-  $("timer-again").addEventListener("click", function () { resetExport("timer"); });
   $("timer-reveal").addEventListener("click", function () { revealInFinder("timer"); });
 
   // spinner form
@@ -2048,7 +2254,6 @@
     if (err) { showError("spinner", err); return; }
     startExport("spinner", spinnerPayload());
   });
-  $("spinner-again").addEventListener("click", function () { resetExport("spinner"); });
   $("spinner-reveal").addEventListener("click", function () { revealInFinder("spinner"); });
 
   // qr form
@@ -2061,7 +2266,6 @@
     if (err) { showError("qr", err); return; }
     startExport("qr", qrPayload());
   });
-  $("qr-again").addEventListener("click", function () { resetExport("qr"); });
   $("qr-reveal").addEventListener("click", function () { revealInFinder("qr"); });
   $("qr-refresh").addEventListener("click", function () {
     if (qrPreviewTimer) clearTimeout(qrPreviewTimer);
@@ -2156,7 +2360,6 @@
     if (err) { showError("motionbg", err); return; }
     startExport("motionbg", motionBgPayload());
   });
-  $("motionbg-again").addEventListener("click", function () { resetExport("motionbg"); });
   $("motionbg-reveal").addEventListener("click", function () { revealInFinder("motionbg"); });
 
   // scoreboard
@@ -2165,6 +2368,17 @@
     if (file) uploadBoard(file);
   });
   $("board-close").addEventListener("click", closeBoard);
+  $("board-add").addEventListener("click", function () {
+    if (draw.on) stopBoardDraw(); else startBoardDraw();
+  });
+  $("board-add-cancel").addEventListener("click", stopBoardDraw);
+  $("board-add-form").addEventListener("submit", submitBoardAdd);
+  $("board-stage").addEventListener("pointerdown", boardDrawDown);
+  $("board-stage").addEventListener("pointermove", boardDrawMove);
+  $("board-stage").addEventListener("pointerup", boardDrawUp);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && draw.on) stopBoardDraw();
+  });
   $("board-name").addEventListener("input", function () {
     board.dirty = true;
     scheduleBoardSave(false);   // the name doesn't change the picture
@@ -2173,7 +2387,6 @@
     if (e.key === "Enter") { e.preventDefault(); this.blur(); }
   });
   $("board-export").addEventListener("click", exportBoard);
-  $("board-again").addEventListener("click", function () { resetExport("board"); });
   $("board-reveal").addEventListener("click", function () { revealInFinder("board"); });
 
   // update banner + footer (handlers attached once)
@@ -2182,6 +2395,23 @@
     $("update-pill").hidden = true;
   });
   $("check-updates").addEventListener("click", function () { checkForUpdate(true, true); });
+
+  // Anonymous usage counts: reflect the saved setting, and save on change.
+  fetch("/api/stats", { cache: "no-store" })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (j) {
+      if (!j) return;
+      $("stats-enabled").checked = !!j.enabled;
+      $("stats-toggle").hidden = false;
+    })
+    .catch(function () {});
+  $("stats-enabled").addEventListener("change", function () {
+    fetch("/api/stats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: $("stats-enabled").checked })
+    }).catch(function () {});
+  });
   $("version-btn").addEventListener("click", function () { checkForUpdate(true, true); });
 
   // boot

@@ -147,7 +147,33 @@ def _winocr_stub(result, limit=10000):
         max_image_dimension = limit
 
     module.OcrEngine = OcrEngine
-    module.recognize_pil_sync = lambda image, lang: result
+    # The detector now OCRs several renditions (native, rescaled, inverted).
+    # A real engine reports rects in the pixels of the image it was handed,
+    # so scale ours by the ratio to the native width; a stub that ignored
+    # scale would place every rescaled read somewhere else on the board.
+    calls = []
+    module.calls = calls
+    module.base_width = [None]
+
+    def recognize(image, lang):
+        calls.append(image.size)
+        if module.base_width[0] is None:
+            module.base_width[0] = image.width
+        f = image.width / float(module.base_width[0])
+        if f == 1.0:
+            return result
+        out = {"text_angle": result.get("text_angle"), "lines": []}
+        for line in result.get("lines", []):
+            words = []
+            for w in line.get("words", []):
+                r = w["bounding_rect"]
+                words.append({"text": w["text"], "bounding_rect": {
+                    "x": r["x"] * f, "y": r["y"] * f,
+                    "width": r["width"] * f, "height": r["height"] * f}})
+            out["lines"].append({"words": words})
+        return out
+
+    module.recognize_pil_sync = recognize
     return module
 
 
@@ -185,6 +211,23 @@ def check_windows_ocr():
         check("the rejoined box spans all three digits",
               boxes and (boxes[0]["x"], boxes[0]["w"]) == (100, 110),
               "got {0!r}".format(boxes[:1]))
+        check("several renditions were read and unioned without duplicates",
+              len(_sys.modules["winocr"].calls) >= 3 and len(boxes) == 1,
+              "calls={0} boxes={1}".format(
+                  _sys.modules["winocr"].calls, [b["text"] for b in boxes]))
+
+        # Windows reads light digits as letters: "35O" is 350, "24O" is 240,
+        # but a real word ("SO") stays out.
+        lookalike = {"text_angle": 0.0, "lines": [{"words": [
+            {"text": "35O", "bounding_rect": _rect(100, 100, 100, 60)},
+            {"text": "I5", "bounding_rect": _rect(400, 100, 60, 60)},
+            {"text": "SO", "bounding_rect": _rect(600, 100, 60, 60)},
+        ]}]}
+        _sys.modules["winocr"] = _winocr_stub(lookalike)
+        boxes = scoreboard._detect_windows(img)
+        check("lookalike letters inside numbers become digits",
+              sorted(b["text"] for b in boxes) == ["15", "350"],
+              "got {0!r}".format([b["text"] for b in boxes]))
 
         # A tilted capture must be refused, not silently mapped onto the
         # wrong pixels: the rects Windows returns are de-skewed.
@@ -323,6 +366,39 @@ def check_scoreboard():
     finally:
         if os.path.isfile(path):
             os.unlink(path)
+
+    # A number OCR missed can be added by hand: same harvest, same render.
+    extra = boxes[0]
+    before = len(scoreboard.load_board(board["id"])["boxes"])
+    try:
+        scoreboard.add_box(board["id"], {"x": extra["x"], "y": extra["y"],
+                                         "w": extra["w"], "h": extra["h"]},
+                           extra["text"])
+        check("adding a box over an existing number is refused", False,
+              "no error raised")
+    except scoreboard.BoardError as exc:
+        check("adding a box over an existing number is refused",
+              "already" in str(exc), "got {0!r}".format(str(exc)))
+    manual_rect = {"x": 5, "y": 5, "w": 60, "h": 30}     # blank corner
+    added = scoreboard.add_box(board["id"], manual_rect, "77")
+    check("a hand-drawn box joins the board",
+          len(added["boxes"]) == before + 1 and
+          any(b.get("manual") for b in added["boxes"]),
+          "got {0} boxes".format(len(added["boxes"])))
+    check("its value is seeded from what the operator typed",
+          added["values"].get([b for b in added["boxes"]
+                               if b.get("manual")][0]["id"]) == "77",
+          "values={0!r}".format(added["values"]))
+    scoreboard.render_board(board["id"])   # must not raise with a manual box
+
+    # A board with nothing detected is kept for manual marking, not refused.
+    empty = scoreboard.create_board(source, "Empty board", boxes=[])
+    check("a board with no detected numbers is still created",
+          empty.get("id") and empty["boxes"] == [],
+          "got {0!r}".format(empty.get("boxes")))
+    check("an empty board can be reopened",
+          scoreboard.load_board(empty["id"])["boxes"] == [], "load failed")
+    scoreboard.delete_board(empty["id"])
 
     scoreboard.delete_board(board["id"])
     check("deleting a board removes its folder",
