@@ -43,8 +43,9 @@ class JobManager:
     progress_cb accepts an int 0..100.
     """
 
-    def __init__(self, renderers):
+    def __init__(self, renderers, on_error=None):
         self._renderers = renderers
+        self._on_error = on_error       # fn(job_type, exc) — never raises
         self._jobs = {}
         self._queue = queue.Queue()
         self._lock = threading.Lock()
@@ -104,3 +105,8 @@ class JobManager:
                 with self._lock:
                     job.error = str(exc) or exc.__class__.__name__
                     job.status = "error"
+                if self._on_error is not None:
+                    try:
+                        self._on_error(job.type, exc)
+                    except Exception:
+                        pass

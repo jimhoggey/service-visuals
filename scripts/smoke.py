@@ -107,6 +107,47 @@ def verify(name, filename, expected_duration):
           "got {0!r}".format(dur))
 
 
+def check_stats_privacy():
+    """What the anonymous error reports may contain, and what they may not."""
+    import stats
+
+    print("Stats: error report scrubbing")
+    leaks = [
+        "[Errno 13] Permission denied: '/Users/somebody/Documents/Service Visuals/timer.mp4'",
+        "cannot open C:\\Users\\Somebody\\AppData\\Local\\Temp\\_MEI1\\ffmpeg.exe",
+        "KeyError: 'Pink sparkly ponies'",
+        "could not write board_Group-points_20260818.png (disk full)",
+        "The board ~/.service-visuals/boards/abc/source.png is missing",
+    ]
+    for raw in leaks:
+        out = stats._scrub(raw)
+        check("no path, filename or quoted value survives: " + raw[:32] + "…",
+              "/" not in out and "\\" not in out and ".png" not in out
+              and ".mp4" not in out and "ponies" not in out
+              and "Somebody" not in out and "somebody" not in out,
+              "got {0!r}".format(out))
+    check("harmless messages pass through",
+          stats._scrub("h264_nvenc: Cannot load nvcuda.dll (error 126)")
+          == "h264_nvenc: Cannot load nvcuda.dll (error 126)", "mangled")
+
+    def inner():
+        raise ValueError("boom")
+
+    try:
+        inner()
+    except ValueError as exc:
+        where = stats._where(exc)
+    check("where() gives basename:line function, innermost first",
+          where.startswith("smoke.py:") and "inner" in where.split(" < ")[0]
+          and "/" not in where, "got {0!r}".format(where))
+
+    # Never sends when not asked to: no worker, no queue growth.
+    before = stats._q.qsize()
+    stats.track("crash", error="X")
+    check("track() is a no-op until start() has run",
+          stats._q.qsize() == before, "queued an event with no worker")
+
+
 def check_vision_flip():
     """Apple Vision's bottom-left origin must be flipped, not copied.
 
@@ -455,6 +496,8 @@ def main():
             if os.path.isfile(path):
                 os.unlink(path)
 
+    print()
+    check_stats_privacy()
     print()
     try:
         check_vision_flip()

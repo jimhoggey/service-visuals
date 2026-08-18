@@ -28,6 +28,22 @@ def _pick_port(preferred=8765):
 
 
 def main():
+    # Import stats before anything heavy so a crash inside the imports
+    # below (a missing DLL, a broken bundle) is still caught and reported.
+    import stats
+    from version import APP_VERSION
+    stats.install_excepthooks()
+    stats.start(APP_VERSION)        # idempotent; app.py calls it again
+    stats.report_previous_boot()    # arm the boot marker BEFORE the imports
+    try:
+        _run()
+    except Exception as exc:
+        stats.report_error("crash", exc, where_kind="startup")
+        stats.flush(2.0)
+        raise
+
+
+def _run():
     from app import app, prepare_exports_dir
     from werkzeug.serving import make_server
 

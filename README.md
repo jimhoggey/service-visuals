@@ -39,11 +39,15 @@ swap ever fails, the app says so on its next launch (and keeps a log at
 **Anonymous usage counts.** So we can see which tools actually get used, the
 app sends a tiny anonymous event when a visual is exported — just the event
 name (e.g. `export`, `scoreboard`), the app version and the operating system.
-Nothing you type, upload, name or link is ever sent, there is no user or device
-ID, and it can't be traced back to a person or a church. It goes to
-[Aptabase](https://aptabase.com/) (open source, privacy-first). Turn it off any
-time with the **ANONYMOUS USAGE COUNTS** switch in the footer. The full list of
-events lives in [`stats.py`](stats.py).
+If something goes wrong (an export fails, the app crashes or won't open) it
+also sends the *shape* of the error: the error type and where in the app's own
+code it happened, with any file paths, file names and quoted values removed
+first — the full details stay on your computer in
+`~/.service-visuals/crash.log`. Nothing you type, upload, name or link is ever
+sent, there is no user or device ID, and it can't be traced back to a person
+or a church. It goes to [Aptabase](https://aptabase.com/) (open source,
+privacy-first). Turn it off any time with the **ANONYMOUS USAGE COUNTS**
+switch in the footer. The full list of events lives in [`stats.py`](stats.py).
 
 ## Using it
 

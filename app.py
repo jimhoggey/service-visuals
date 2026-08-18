@@ -16,13 +16,14 @@ import threading
 import urllib.request
 import webbrowser
 
-APP_VERSION = "1.19.0"
+from version import APP_VERSION  # noqa: E402
 GITHUB_REPO = "jimhoggey/service-visuals"
 
 import io
 import uuid
 
 from flask import (Flask, jsonify, request, send_file, send_from_directory)
+from flask.signals import got_request_exception
 from PIL import Image
 
 import aiassist
@@ -77,7 +78,17 @@ def _counted(tool, fn):
 jobs = JobManager({"timer": _counted("timer", render_timer),
                    "spinner": _counted("spinner", render_spinner),
                    "qr": _counted("qr", render_qr),
-                   "motionbg": _counted("motionbg", render_motion_bg)})
+                   "motionbg": _counted("motionbg", render_motion_bg)},
+                  on_error=lambda tool, exc:
+                      stats.report_error("render_failed", exc, tool=tool))
+
+
+@got_request_exception.connect_via(app)
+def _report_unhandled(sender, exception, **_extra):
+    """A route that blew up (a 500) is a crash from the operator's seat."""
+    # Endpoint name only — never the raw URL, which could carry a board id.
+    stats.report_error("request_failed", exception,
+                       route=str(request.endpoint or "unmatched")[:60])
 
 # NB: matched with .fullmatch() — "$" alone would accept a trailing newline.
 HEX_COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")
@@ -423,6 +434,9 @@ def index():
 
 @app.route("/api/health")
 def api_health():
+    # The UI's first request means the app has fully launched — clear the
+    # boot marker so the next start doesn't report this one as failed.
+    stats.boot_ready()
     # platform lets the UI label its file button correctly
     # ("Reveal in Finder" vs "Show in Explorer").
     return jsonify({"ok": True, "platform": sys.platform})
@@ -1024,6 +1038,7 @@ def prepare_exports_dir():
     os.makedirs(EXPORTS_DIR, exist_ok=True)
     updater.sweep_backups()
     stats.start(APP_VERSION)
+    stats.report_previous_boot()     # also arms the marker for this boot
     # Sweep leftovers from renders that a killed server never finished.
     for leftover in os.listdir(EXPORTS_DIR):
         if leftover.endswith(".part"):
