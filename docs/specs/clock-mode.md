@@ -115,3 +115,59 @@ Let `T` = start + elapsed, wrapping at 24 h (`23:59:55` + 10 s shows `00:00:05`)
 - `SERVICE_VISUALS_STATS=0 .venv/bin/python scripts/smoke.py` passes with the new checks.
 - A 30 s clock renders in well under a minute on this Mac with millis on.
 - The UI switches modes cleanly and the preview matches the render's first frame.
+
+---
+
+# Addendum (shipped v1.23.0): milliseconds in COUNTDOWN mode too
+
+**Why:** "Sometimes I just want a five-minute timer, but others I want five
+minutes with the milliseconds." Same toggle, both modes.
+
+## Behaviour
+
+- The **Show milliseconds** checkbox moves out of the clock-only Display group
+  into its own small group **visible in BOTH modes**, id `timer-show-millis`,
+  default off, hint `Renders at 30 fps — longer to export`. (Clock's *Show
+  seconds* stays clock-only in the Display group; in clock mode ticking millis
+  still forces/locks *Show seconds* exactly as before.) The old
+  `timer-clock-show-millis` id goes away — one checkbox, one id.
+- Countdown with millis displays `M:SS.mmm` (and `MM:SS.mmm`, `H:MM:SS.mmm`,
+  following `_format_remaining`'s width rule for the main part), where
+  `rem_ms = max(0, total*1000 - round(i*1000/input_fps))`, main =
+  `_format_remaining(rem_ms // 1000, total)`, millis = `rem_ms % 1000` as three
+  digits. The last countdown frame reads `0:00.000`; the hold shows `0:00.000`.
+- Millis drawn at 55 % on the shared baseline (reuse `_render_clock_block` with
+  `tag=None`), same colour as the main digits — including the **warn colour**:
+  when `warn_last10` and `rem_ms <= 10_000`, the whole block is accent.
+- Sizing: classic → `_clock_font_size(main, show_millis=True, has_tag=False)`
+  (fit 1600, cap 400); ring → same with `RING_INNER_FIT`/`RING_DIGITS_MAX`;
+  bar → fit `BAR_WIDTH` (1640), cap 330. Without millis, sizes are exactly as
+  today (do not touch the non-millis path).
+- Frame rate: countdown with millis → input fps **30**, output fps **30**, no
+  per-second base cache (every frame unique). Without millis: unchanged.
+- Filename: append `_ms` to the descriptor when millis are on
+  (`timer_5m00s_classic_ms_<stamp>.mp4`).
+- Estimate (UI): `frames = (total + hold) × (millis ? 30 : existing_fps)`.
+- Preview: first frame shows `5:00.000` at the fitted size per style; ring and
+  bar previews use the same fit rule as the renderer (mirror the constants).
+
+## API
+
+`show_millis` (bool, default false) is now accepted in **countdown** payloads
+too; `_validate_countdown_options` validates it like the clock's and returns
+it. Countdown payloads without the key behave exactly as before.
+
+## Files & ownership
+
+One implementer owns everything for this addendum: `render/timer.py`, `app.py`,
+`scripts/smoke.py`, `static/index.html`, `static/app.js`, `static/style.css`,
+`README.md` (one clause). Smoke: add a 6 s countdown render with millis on
+(classic) through `verify()`, a pure check that the countdown text at
+`rem_ms=4_033` with total 300 is main `4:59` / millis `967`... (i.e. `0:04.033`
+→ main `0:04`, millis `033`), and a validation check that `show_millis` is
+accepted and defaults to false in countdown mode. Existing countdown renders
+(no millis) must remain byte-identical.
+
+Added in verification: with millis on, a countdown is capped at 30 minutes
+(`MILLIS_MAX_SECONDS`), matching the clock's ceiling — 30 fps with nothing
+cacheable makes a 2-hour timer a 20-minute render.

@@ -95,6 +95,7 @@ HEX_COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")
 EXPORT_FILENAME_RE = re.compile(r"[A-Za-z0-9._-]+\.(mp4|png)")
 
 TIMER_STYLES = ("classic", "ring", "bar")
+MILLIS_MAX_SECONDS = 1800        # countdown ceiling when milliseconds are on
 CLOCK_FORMATS = ("12h", "24h")
 # HH:MM:SS, 24-hour, zero-padded — the exact shape the "Shows as ..." hint
 # and the renderer both expect. fullmatch()'d, so trailing junk is rejected.
@@ -177,6 +178,19 @@ def _validate_countdown_options(options):
     hold_seconds = _int_field(
         options, "hold_seconds", 0, 30, 5, "Hold at 00:00")
 
+    # Addendum (v1.23.0): the same millis toggle clock mode uses, now also
+    # accepted on a countdown. Same message/shape as the clock branch below.
+    show_millis = options.get("show_millis", False)
+    if not isinstance(show_millis, bool):
+        raise ValidationError('"Show milliseconds" must be true or false.')
+    # Millis mean 30 unique frames a second with nothing to cache: a 2-hour
+    # countdown would be 216,000 frames (~20 minutes to render). Same ceiling
+    # the clock mode has; nobody reads milliseconds on a 45-minute timer.
+    if show_millis and total > MILLIS_MAX_SECONDS:
+        raise ValidationError(
+            "With milliseconds on, the timer can run for at most 30 minutes. "
+            "Turn milliseconds off for a longer timer.")
+
     return {
         "minutes": minutes,
         "seconds": seconds,
@@ -184,6 +198,7 @@ def _validate_countdown_options(options):
         "accent": _accent_field(options),
         "warn_last10": warn_last10,
         "hold_seconds": hold_seconds,
+        "show_millis": show_millis,
     }
 
 

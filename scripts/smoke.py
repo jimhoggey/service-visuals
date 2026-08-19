@@ -155,6 +155,24 @@ def check_clock_format():
           got == ("07:59:50.005", ""), "got {0!r}".format(got))
 
 
+def check_countdown_millis_format():
+    """Addendum (v1.23.0): render_timer's countdown-with-millis text split —
+    main = _format_remaining(rem_ms // 1000, total), millis = rem_ms % 1000
+    as three digits (docs/specs/clock-mode.md addendum). Exercised directly
+    on the pure formatter, no fonts/rendering involved.
+    """
+    from render.timer import _format_remaining
+
+    print("Timer: countdown millis text split")
+
+    rem_ms, total = 4033, 300
+    main = _format_remaining(rem_ms // 1000, total)
+    millis = "{0:03d}".format(rem_ms % 1000)
+    check("rem_ms=4033, total=300 -> main '0:04', millis '033'",
+          main == "0:04" and millis == "033",
+          "got main={0!r} millis={1!r}".format(main, millis))
+
+
 def check_clock_validation():
     """app.validate_timer_options: mode dispatch, clock-only field checks,
     and proof a countdown payload validates exactly as it did before this
@@ -167,15 +185,24 @@ def check_clock_validation():
     countdown = {"minutes": 1, "seconds": 0, "style": "ring",
                  "accent": "#e8b44f", "warn_last10": False,
                  "hold_seconds": 3}
+    # Addendum (v1.23.0): show_millis is now a countdown key too, defaulting
+    # false — this dict is the "before this feature existed" contract, so
+    # its presence (always false here, since `countdown` never sets it)
+    # proves an old caller that never heard of millis still gets the exact
+    # dict shape it always got, plus the new default key.
     expected = {"minutes": 1, "seconds": 0, "style": "ring",
                 "accent": "#e8b44f", "warn_last10": False,
-                "hold_seconds": 3}
+                "hold_seconds": 3, "show_millis": False}
     clean = app.validate_timer_options(countdown)
     check("a countdown payload (mode absent) validates unchanged",
           clean == expected, "got {0!r}".format(clean))
     clean = app.validate_timer_options(dict(countdown, mode="countdown"))
     check('mode="countdown" validates the same as mode absent',
           clean == expected, "got {0!r}".format(clean))
+
+    clean = app.validate_timer_options(dict(countdown, show_millis=True))
+    check("show_millis=True is accepted in countdown mode",
+          clean.get("show_millis") is True, "got {0!r}".format(clean))
 
     clock = {"mode": "clock", "start": "19:59:50", "duration_seconds": 30,
              "format": "12h", "show_seconds": True, "show_millis": False,
@@ -200,6 +227,9 @@ def check_clock_validation():
                  dict(clock, duration_seconds=2), "Clip length must be")
     expect_error("duration_seconds above 1800 is rejected",
                  dict(clock, duration_seconds=1801), "Clip length must be")
+    expect_error("show_millis must be a boolean in countdown mode",
+                 dict(countdown, show_millis="yes"),
+                 '"Show milliseconds" must be true or false.')
 
 
 def check_stats_privacy():
@@ -557,6 +587,16 @@ def main():
                 quiet_progress)
             rendered.append(("timer/" + style, fn, 8.0))
 
+        # Addendum (v1.23.0): countdown with milliseconds on (classic,
+        # 30fps path) — same expected duration as the plain countdowns
+        # above (6s run + 2s hold), just with the millis toggle flipped.
+        fn = render_timer(
+            {"minutes": 0, "seconds": 6, "style": "classic",
+             "accent": "#e8b44f", "warn_last10": True, "hold_seconds": 2,
+             "show_millis": True},
+            quiet_progress)
+        rendered.append(("timer/classic-ms", fn, 8.0))
+
         # Clock mode: classic with millis on (30 fps path), and ring with
         # millis off (10 fps path) — starts chosen to actually cross a
         # rollover (8 PM, then midnight) during the clip, not just sit
@@ -611,6 +651,8 @@ def main():
 
     print()
     check_clock_format()
+    print()
+    check_countdown_millis_format()
     print()
     check_clock_validation()
     print()

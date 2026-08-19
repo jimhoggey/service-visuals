@@ -284,7 +284,8 @@
       clockLength: toInt($("timer-clock-length").value, 30),
       clockFormat: formatEl ? formatEl.value : "12h",
       showSeconds: $("timer-clock-show-seconds").checked,
-      showMillis: $("timer-clock-show-millis").checked
+      // Addendum (v1.23.0): one checkbox, one id, used by both modes.
+      showMillis: $("timer-show-millis").checked
     };
   }
 
@@ -296,6 +297,10 @@
     var total = m * 60 + s;
     if (total < 5) return "The timer must run for at least 5 seconds.";
     if (total > 7200) return "The timer can run for at most 120 minutes in total.";
+    // Mirrors MILLIS_MAX_SECONDS in app.py: 30 fps with nothing cacheable.
+    if ($("timer-show-millis").checked && total > 1800) {
+      return "With milliseconds on, the timer can run for at most 30 minutes. Turn milliseconds off for a longer timer.";
+    }
     return null;
   }
 
@@ -542,6 +547,10 @@
     var text = formatClock(total, total);
     // renderer: accent digits whenever remaining <= 10s (first frame shown here)
     var digitColor = (t.warn && total > 0 && total <= 10) ? t.accent : TEXT_LIGHT;
+    // Addendum (v1.23.0): first frame is always the full total, so millis
+    // are always ".000" here — never derived from wall time (drawClockTimerPreview
+    // above follows the same "frame 0" rule for clock mode).
+    var millis = t.showMillis ? ".000" : "";
 
     if (t.style === "ring") {
       // render: centreline radius 400, thickness 26, digits 190px (all at 2x)
@@ -555,22 +564,47 @@
       ctx.beginPath();
       ctx.arc(PW / 2, PH / 2, R, -Math.PI / 2, Math.PI * 1.5);
       ctx.stroke();
-      drawClock(ctx, text, PW / 2, PH / 2, digitMetrics(ctx, 95), digitColor);
+      if (millis) {
+        // ".000" widens the string a lot; refit to clear the ring track —
+        // mirrors RING_INNER_FIT/RING_DIGITS_MAX in render/timer.py at
+        // preview scale (702/2=351, 190/2=95). Without millis this is
+        // untouched: same fixed 95px drawClock() call as always.
+        var rw = clockCompositeWidth(ctx, text, millis, "", 100);
+        var rpx = rw > 0 ? Math.max(30, Math.min(95, Math.round(100 * 351 / rw))) : 95;
+        drawClockComposite(ctx, text, millis, "", PW / 2, PH / 2, rpx, digitColor, t.accent);
+      } else {
+        drawClock(ctx, text, PW / 2, PH / 2, digitMetrics(ctx, 95), digitColor);
+      }
     } else if (t.style === "bar") {
       // render: margin 140, top 944, height 16, digits 330px centred at y=500
-      drawClock(ctx, text, PW / 2, 250, digitMetrics(ctx, 165), digitColor);
+      if (millis) {
+        // fit to the bar's width — mirrors BAR_WIDTH/330 at preview scale
+        // (1640/2=820, 330/2=165). Without millis: unchanged fixed 165px.
+        var bw = clockCompositeWidth(ctx, text, millis, "", 100);
+        var bpx = bw > 0 ? Math.max(30, Math.min(165, Math.round(100 * 820 / bw))) : 165;
+        drawClockComposite(ctx, text, millis, "", PW / 2, 250, bpx, digitColor, t.accent);
+      } else {
+        drawClock(ctx, text, PW / 2, 250, digitMetrics(ctx, 165), digitColor);
+      }
       roundRectPath(ctx, 70, 472, PW - 140, 8, 4);
       ctx.fillStyle = TRACK;
       ctx.fill();
       roundRectPath(ctx, 70, 472, PW - 140, 8, 4);   // full at the first frame
       ctx.fillStyle = t.accent;
       ctx.fill();
+    } else if (millis) {
+      // classic + millis: auto-size the FULL string (incl. ".000") to fit
+      // 1600px at 2x (800 here), capped at 400 (200 here) — same fit rule
+      // as _clock_font_size(show_millis=True, has_tag=False) in timer.py.
+      var w = clockCompositeWidth(ctx, text, millis, "", 100);
+      var px = w > 0 ? Math.max(30, Math.min(200, Math.round(100 * 800 / w))) : 200;
+      drawClockComposite(ctx, text, millis, "", PW / 2, PH / 2, px, digitColor, t.accent);
     } else {
       // classic: auto-size to fit 1600px at 2x (800 here), capped at 200
       var ref = digitMetrics(ctx, 100);
-      var w = clockWidth(text, ref);
-      var px = w > 0 ? Math.max(30, Math.min(200, Math.round(100 * 800 / w))) : 200;
-      drawClock(ctx, text, PW / 2, PH / 2, digitMetrics(ctx, px), digitColor);
+      var w2 = clockWidth(text, ref);
+      var px2 = w2 > 0 ? Math.max(30, Math.min(200, Math.round(100 * 800 / w2))) : 200;
+      drawClock(ctx, text, PW / 2, PH / 2, digitMetrics(ctx, px2), digitColor);
     }
   }
 
@@ -585,7 +619,10 @@
       frames = t.clockLength * fps;
     } else {
       var total = t.minutes * 60 + t.seconds;
-      var fps2 = (t.style === "classic") ? 1 : (total <= 600 ? 10 : (total <= 1800 ? 4 : 2));
+      // Addendum (v1.23.0): millis on -> flat 30fps input, same as clock
+      // mode's millis path (docs/specs/clock-mode.md addendum "Frame rate").
+      var fps2 = t.showMillis ? 30
+        : (t.style === "classic" ? 1 : (total <= 600 ? 10 : (total <= 1800 ? 4 : 2)));
       frames = (total + t.hold) * fps2;
     }
     var sec = Math.max(2, Math.round(frames / 30));
@@ -621,8 +658,10 @@
     $("timer-clock-display-group").hidden = !isClock;
 
     // Milliseconds need seconds — force it on and lock the box while millis
-    // is checked (spec: "Ticking it also ticks/locks Show seconds").
-    var millisOn = $("timer-clock-show-millis").checked;
+    // is checked (spec: "Ticking it also ticks/locks Show seconds"). Show
+    // seconds is still clock-only, so this only matters in clock mode, but
+    // it's harmless to keep the two boxes in sync regardless of mode.
+    var millisOn = $("timer-show-millis").checked;
     if (millisOn) $("timer-clock-show-seconds").checked = true;
     $("timer-clock-show-seconds").disabled = millisOn;
 
@@ -649,7 +688,7 @@
       var holdErr = validateTimerHold();
       err = durationErr || holdErr;
       var hint = $("timer-duration-hint");
-      hint.textContent = durationErr || "5 seconds to 120 minutes";
+      hint.textContent = durationErr || ($("timer-show-millis").checked ? "5 seconds to 30 minutes with milliseconds" : "5 seconds to 120 minutes");
       hint.classList.toggle("is-bad", !!durationErr);
       var holdHint = $("timer-hold-hint");
       holdHint.textContent = holdErr || "0 to 30 seconds";
@@ -691,7 +730,10 @@
         style: t.style,
         accent: t.accent,
         warn_last10: t.warn,
-        hold_seconds: t.hold
+        hold_seconds: t.hold,
+        // Addendum (v1.23.0): accepted (and defaults false) in countdown
+        // payloads too now — see _validate_countdown_options in app.py.
+        show_millis: t.showMillis
       }
     };
   }

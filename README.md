@@ -58,7 +58,8 @@ switch in the footer. The full list of events lives in [`stats.py`](stats.py).
      warn colour in the final 10 seconds, hold at 0:00 — or switch its MODE
      to **Clock** for a live wall clock that ticks forward from a start
      time you choose, in Classic or Ring style, 12- or 24-hour format, with
-     optional seconds and milliseconds.
+     optional seconds and milliseconds. **Show milliseconds** works in
+     Countdown mode too, for a `5:00.000`-style timer.
    - **Spinner**: one entry per line (2–100), Random or Choose-winner mode,
      accent colour. Try **Test Spin** in the preview. **Fill with AI** can
      top up the wheel — type what you need (e.g. "books of the Bible", "world

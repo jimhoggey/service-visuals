@@ -251,9 +251,16 @@
               <input type="checkbox" id="timer-clock-show-seconds" checked>
               <label for="timer-clock-show-seconds">Show seconds</label>
             </div>
+          </fieldset>
+
+          <!-- Addendum (v1.23.0): milliseconds apply to BOTH modes now, so
+               this lives outside the clock-only groups above and is never
+               hidden by applyTimerMode(). -->
+          <fieldset class="group" id="timer-millis-group">
+            <legend>Milliseconds</legend>
             <div class="check-row">
-              <input type="checkbox" id="timer-clock-show-millis">
-              <label for="timer-clock-show-millis">Show milliseconds</label>
+              <input type="checkbox" id="timer-show-millis">
+              <label for="timer-show-millis">Show milliseconds</label>
             </div>
             <p class="hint">Renders at 30 fps &#8212; longer to export</p>
           </fieldset>

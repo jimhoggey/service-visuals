@@ -585,9 +585,10 @@ def render_timer(options, progress_cb):
 
     Countdown options: minutes, seconds (total 5..7200 s), style
     classic|ring|bar, accent '#rrggbb', warn_last10 bool, hold_seconds
-    0..30. Counts down from the total to 0:00, then holds at 0:00 for
-    hold_seconds (at least one full second of 0:00 is always shown, even
-    with hold 0).
+    0..30, show_millis bool (default False — addendum v1.23.0). Counts down
+    from the total to 0:00, then holds at 0:00 for hold_seconds (at least
+    one full second of 0:00 is always shown, even with hold 0). With
+    show_millis the last frame and the whole hold read "0:00.000".
     """
     options = options or {}
     if options.get("mode") == "clock":
@@ -605,8 +606,18 @@ def render_timer(options, progress_cb):
     accent = _parse_hex(options.get("accent"), DEFAULT_ACCENT)
     warn_last10 = bool(options.get("warn_last10", True))
     hold = max(0, min(30, _to_int(options.get("hold_seconds"), 5)))
-
-    fps = _input_fps(style, total)
+    # Addendum (v1.23.0): the same millis toggle clock mode uses, now also
+    # accepted on a countdown. Every frame's ms differs, so the per-second
+    # base cache below can't help it and 15fps->duplicated output would be
+    # visibly choppy — millis countdowns get their own 30fps input/output,
+    # exactly like clock mode's millis path. Without millis this whole
+    # branch is skipped and `fps`/`out_fps` come out exactly as before.
+    show_millis = bool(options.get("show_millis", False))
+    if show_millis:
+        fps, out_fps = 30, 30
+    else:
+        fps = _input_fps(style, total)
+        out_fps = TIMER_OUTPUT_FPS
     # max(1, hold): with hold=0 the loop would stop at rem=1 and 0:00 would
     # never appear; always render at least one second of the finished state.
     total_frames = (total + max(1, hold)) * fps
@@ -630,10 +641,29 @@ def render_timer(options, progress_cb):
         size, digits_cy = 330, 500       # slightly above center
     else:
         size, digits_cy = _classic_font_size(initial_text), HEIGHT // 2
+    if show_millis:
+        # ".mmm" widens the string a lot ("5:00" -> "5:00.000"); refit per
+        # style exactly like clock mode's sizing, so the ring/bar digits
+        # still clear their track. Reuses _clock_font_size (has_tag=False —
+        # a countdown never has an AM/PM tag) with each style's own fit
+        # width/cap; classic's defaults (1600/400) match _classic_font_size's
+        # numbers exactly, just fitted to the wider millis string instead.
+        # Without millis this block never runs — `size` above is untouched.
+        if style == "ring":
+            size = _clock_font_size(initial_text, True, False,
+                                    RING_INNER_FIT, RING_DIGITS_MAX)
+        elif style == "bar":
+            size = _clock_font_size(initial_text, True, False,
+                                    BAR_WIDTH, 330)
+        else:
+            size = _clock_font_size(initial_text, True, False)
     met = _digits_metrics(size)
+    met_ms = _digits_metrics(max(1, int(round(size * CLOCK_MS_SCALE)))) \
+        if show_millis else None
 
     out_path = export_path(
-        "timer", "{0}m{1:02d}s_{2}".format(total // 60, total % 60, style))
+        "timer", "{0}m{1:02d}s_{2}{3}".format(
+            total // 60, total % 60, style, "_ms" if show_millis else ""))
 
     # Digit bases (background + digits for one displayed second) are shared
     # by every frame within that second. The cache is small and lock-guarded
@@ -666,9 +696,32 @@ def render_timer(options, progress_cb):
 
     def make_frame(i):
         t = i / float(fps)
-        elapsed = int(t)
-        rem = total - elapsed if elapsed < total else 0
-        base = base_for(rem)
+        if show_millis:
+            # Every frame's ms is unique (30fps, no per-second repeats), so
+            # there is no base cache here — matches clock mode's millis path
+            # (module docstring / _render_clock's make_frame above). Frame
+            # index arithmetic mirrors format_clock_time's contract exactly:
+            # ms = round(i*1000/fps), just counting DOWN instead of forward.
+            rem_ms = max(0, total * 1000 - int(round(i * 1000.0 / fps)))
+            color = (accent if (warn_last10 and rem_ms <= 10_000)
+                    else DIGITS_COLOR)
+            main_text = _format_remaining(rem_ms // 1000, total)
+            # Leading "." makes this the same "small run" shape clock mode
+            # passes (main_text[-4:] there always keeps the dot too) — the
+            # "." gets its own narrow slot via _digits_metrics/_slot_width,
+            # same as everywhere else a dot is drawn.
+            ms_text = ".{0:03d}".format(rem_ms % 1000)
+            block = _render_clock_block(main_text, ms_text, "", color, color,
+                                        met, met_ms, None, 0)
+            base = bg.copy()
+            base.paste(block,
+                       (WIDTH // 2 - block.width // 2,
+                        digits_cy - block.height // 2),
+                       block)
+        else:
+            elapsed = int(t)
+            rem = total - elapsed if elapsed < total else 0
+            base = base_for(rem)
         if style == "classic":
             return base                  # nothing animates within a second
         frame = base.copy()
@@ -682,7 +735,9 @@ def render_timer(options, progress_cb):
         return frame
 
     # 15 fps out looks identical for countdown content and halves the encode
-    # (a 5-minute timer at 30 fps meant 9000 encoded frames).
+    # (a 5-minute timer at 30 fps meant 9000 encoded frames). Millis mode
+    # uses 30/30 (set above) so every unique ms value actually gets its own
+    # encoded frame instead of being smeared across duplicated output frames.
     encode_parallel(out_path, fps, total_frames, make_frame, progress_cb,
-                    output_fps=TIMER_OUTPUT_FPS)
+                    output_fps=out_fps)
     return os.path.basename(out_path)
