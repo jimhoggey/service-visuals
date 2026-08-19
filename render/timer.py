@@ -31,8 +31,7 @@ from collections import OrderedDict
 from PIL import Image, ImageDraw
 
 from . import fonts
-from .encoder import (FrameEncoder, WIDTH, HEIGHT, encode_parallel,
-                      export_path)
+from .encoder import WIDTH, HEIGHT, encode_parallel, export_path
 
 TIMER_OUTPUT_FPS = 15   # see the FrameEncoder call in render_timer()
 

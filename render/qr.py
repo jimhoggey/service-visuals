@@ -39,7 +39,7 @@ import segno
 from PIL import Image, ImageDraw
 
 from . import fonts
-from .encoder import (FrameEncoder, HEIGHT, OUTPUT_FPS, UPLOADS_DIR, WIDTH,
+from .encoder import (FrameEncoder, HEIGHT, UPLOADS_DIR, WIDTH,
                       export_path)
 
 # Pillow >= 9.1 moved resampling filters into an enum; keep 3.9-safe access.

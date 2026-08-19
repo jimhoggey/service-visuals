@@ -281,33 +281,6 @@ def _detect_macos(img):
     return _dedupe_boxes(boxes)
 
 
-OVERLAP_MERGE = 0.6
-
-
-def _dedupe_boxes(boxes):
-    """Drop a box that sits (almost) on top of one we already have.
-
-    A number can now be reported twice — once as a whole token and once as a
-    run inside it — and two editable boxes over one score would let the
-    operator type into the hidden one.
-    """
-    kept = []
-    for box in sorted(boxes, key=lambda b: -(b["w"] * b["h"])):
-        area = max(1, box["w"] * box["h"])
-        clash = False
-        for other in kept:
-            ox = min(box["x"] + box["w"], other["x"] + other["w"]) \
-                - max(box["x"], other["x"])
-            oy = min(box["y"] + box["h"], other["y"] + other["h"]) \
-                - max(box["y"], other["y"])
-            if ox > 0 and oy > 0 and (ox * oy) >= OVERLAP_MERGE * area:
-                clash = True
-                break
-        if not clash:
-            kept.append(box)
-    return kept
-
-
 def _detect_windows(img):
     try:
         import winocr
@@ -450,10 +423,13 @@ def _iou(a, b):
 
 
 def _dedupe_boxes(boxes, threshold=0.5):
-    """Union several OCR passes: keep one box per place on the image.
+    """Keep one box per place on the image.
 
-    Earlier passes win (the native-scale read has the truest rect); a later
-    pass only contributes boxes that overlap nothing kept so far.
+    Two things produce duplicates and this handles both: several OCR passes
+    reading the same number (Windows), and one pass reporting a number twice
+    — once as a whole token and once as the numeric run inside it (macOS).
+    Earlier entries win (the native-scale read has the truest rect); a later
+    one only contributes boxes that overlap nothing kept so far.
     """
     kept = []
     for box in boxes:
