@@ -32,7 +32,7 @@ import stats
 import updater
 from jobs import JobManager
 from render.encoder import EXPORTS_DIR, UPLOADS_DIR
-from render.timer import render_timer
+from render.timer import CLOCK_STYLES, render_timer
 from render.spinner import render_spinner
 from render.qr import (POSITIONS, render_qr, render_qr_image,
                        render_qr_still)
@@ -95,6 +95,10 @@ HEX_COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")
 EXPORT_FILENAME_RE = re.compile(r"[A-Za-z0-9._-]+\.(mp4|png)")
 
 TIMER_STYLES = ("classic", "ring", "bar")
+CLOCK_FORMATS = ("12h", "24h")
+# HH:MM:SS, 24-hour, zero-padded — the exact shape the "Shows as ..." hint
+# and the renderer both expect. fullmatch()'d, so trailing junk is rejected.
+CLOCK_START_RE = re.compile(r"([01]\d|2[0-3]):([0-5]\d):([0-5]\d)")
 SPINNER_MODES = ("random", "rigged")
 MOTIONBG_STYLES = ("aurora", "bokeh", "waves")
 DEFAULT_ACCENT = "#e8b44f"
@@ -141,6 +145,16 @@ def _accent_field(options):
 
 
 def validate_timer_options(options):
+    """Dispatch on options["mode"]: "clock" is the new live-clock branch
+    (below); anything else — including the key being absent — is the
+    original countdown, validated exactly as before this feature existed.
+    """
+    if options.get("mode") == "clock":
+        return _validate_clock_options(options)
+    return _validate_countdown_options(options)
+
+
+def _validate_countdown_options(options):
     minutes = _int_field(options, "minutes", 0, 120, 0, "Minutes")
     seconds = _int_field(options, "seconds", 0, 59, 0, "Seconds")
     total = minutes * 60 + seconds
@@ -170,6 +184,77 @@ def validate_timer_options(options):
         "accent": _accent_field(options),
         "warn_last10": warn_last10,
         "hold_seconds": hold_seconds,
+    }
+
+
+def _clip_length_field(options):
+    """duration_seconds for clock mode. The spec's exact wording ends in a
+    bare "seconds" that the generic _int_field template has no room for
+    (every other _int_field caller spells its own unit into the label
+    instead), so this mirrors _int_field's type-safety checks with that
+    literal message rather than bending the shared helper for one caller.
+    """
+    value = options.get("duration_seconds", 30)
+    msg = "Clip length must be a whole number between 5 and 1800 seconds."
+    if isinstance(value, bool):
+        raise ValidationError(msg + " (Got true/false.)")
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise ValidationError(msg + " (Fractions are not allowed.)")
+        value = int(value)
+    if not isinstance(value, int):
+        raise ValidationError(
+            msg + " (Got {0!r} — send a number, not text.)".format(value))
+    if value < 5 or value > 1800:
+        raise ValidationError(msg)
+    return value
+
+
+def _validate_clock_options(options):
+    """mode: "clock" — a live wall clock, not a countdown (see
+    docs/specs/clock-mode.md). Countdown-only keys (minutes, seconds,
+    warn_last10, hold_seconds) are simply never read here, so they're
+    silently ignored if a caller sends them alongside a clock payload.
+    """
+    start = options.get("start", "19:59:50")
+    stripped = start.strip() if isinstance(start, str) else start
+    if not isinstance(start, str) or not CLOCK_START_RE.fullmatch(stripped):
+        raise ValidationError(
+            "Start time must look like 19:59:50 (24-hour, hours 0-23).")
+    start = stripped
+
+    duration = _clip_length_field(options)
+
+    fmt = options.get("format", "12h")
+    if not isinstance(fmt, str) or fmt not in CLOCK_FORMATS:
+        raise ValidationError('Format must be either "12h" or "24h".')
+
+    show_seconds = options.get("show_seconds", True)
+    if not isinstance(show_seconds, bool):
+        raise ValidationError('"Show seconds" must be true or false.')
+    show_millis = options.get("show_millis", False)
+    if not isinstance(show_millis, bool):
+        raise ValidationError('"Show milliseconds" must be true or false.')
+    if show_millis:
+        show_seconds = True   # can't have millis on screen without seconds
+
+    style = options.get("style", "classic")
+    if style == "bar":
+        raise ValidationError(
+            "Bar style isn't available for the clock — choose classic or "
+            "ring.")
+    if not isinstance(style, str) or style not in CLOCK_STYLES:
+        raise ValidationError("Style must be classic or ring.")
+
+    return {
+        "mode": "clock",
+        "start": start,
+        "duration_seconds": duration,
+        "format": fmt,
+        "show_seconds": show_seconds,
+        "show_millis": show_millis,
+        "style": style,
+        "accent": _accent_field(options),
     }
 
 

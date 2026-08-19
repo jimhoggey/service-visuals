@@ -107,6 +107,101 @@ def verify(name, filename, expected_duration):
           "got {0!r}".format(dur))
 
 
+def check_clock_format():
+    """format_clock_time: the pure display contract clock mode and the JS
+    preview must both match exactly (docs/specs/clock-mode.md). Exercised
+    directly, with no fonts/rendering involved, so these run everywhere.
+    """
+    from render.timer import format_clock_time
+
+    print("Timer: clock format_clock_time")
+
+    # Midnight wrap: a 23:59:55 start plus 10s of elapsed time rolls to
+    # 00:00:05 — a real clock rolling over, not an error or a 24:00:05.
+    total_ms = (23 * 3600 + 59 * 60 + 55) * 1000 + 10000
+    got = format_clock_time(total_ms, "24h", True, False)
+    check("24h midnight wrap: 23:59:55 +10s -> 00:00:05",
+          got == ("00:00:05", ""), "got {0!r}".format(got))
+
+    # 12-hour midnight and noon both display "12", with the right tag.
+    got = format_clock_time(0, "12h", True, False)
+    check("12h midnight is 12:00:00 AM",
+          got == ("12:00:00", "AM"), "got {0!r}".format(got))
+    got = format_clock_time(12 * 3600 * 1000, "12h", True, False)
+    check("12h noon is 12:00:00 PM",
+          got == ("12:00:00", "PM"), "got {0!r}".format(got))
+
+    # Millis are exact frame-index arithmetic (ms = round(i*1000/fps) at
+    # the call site) — here just a straight value, three exact digits.
+    got = format_clock_time(
+        (19 * 3600 + 59 * 60 + 50) * 1000 + 123, "12h", True, True)
+    check("millis are three exact digits",
+          got == ("7:59:50.123", "PM"), "got {0!r}".format(got))
+
+    # Seconds hidden drops straight to H:MM / HH:MM, no tag in 24h.
+    got = format_clock_time(
+        (7 * 3600 + 59 * 60 + 50) * 1000, "12h", False, False)
+    check("seconds hidden shows H:MM (12h, hour not padded)",
+          got == ("7:59", "AM"), "got {0!r}".format(got))
+    got = format_clock_time(
+        (7 * 3600 + 59 * 60 + 50) * 1000, "24h", False, False)
+    check("seconds hidden shows HH:MM (24h, hour padded, no tag)",
+          got == ("07:59", ""), "got {0!r}".format(got))
+
+    # show_millis forces show_seconds on, even if the caller passed False.
+    got = format_clock_time(
+        (7 * 3600 + 59 * 60 + 50) * 1000 + 5, "24h", False, True)
+    check("show_millis forces seconds on",
+          got == ("07:59:50.005", ""), "got {0!r}".format(got))
+
+
+def check_clock_validation():
+    """app.validate_timer_options: mode dispatch, clock-only field checks,
+    and proof a countdown payload validates exactly as it did before this
+    feature existed (mode absent, and mode="countdown" explicitly).
+    """
+    import app
+
+    print("Timer: clock validate_timer_options")
+
+    countdown = {"minutes": 1, "seconds": 0, "style": "ring",
+                 "accent": "#e8b44f", "warn_last10": False,
+                 "hold_seconds": 3}
+    expected = {"minutes": 1, "seconds": 0, "style": "ring",
+                "accent": "#e8b44f", "warn_last10": False,
+                "hold_seconds": 3}
+    clean = app.validate_timer_options(countdown)
+    check("a countdown payload (mode absent) validates unchanged",
+          clean == expected, "got {0!r}".format(clean))
+    clean = app.validate_timer_options(dict(countdown, mode="countdown"))
+    check('mode="countdown" validates the same as mode absent',
+          clean == expected, "got {0!r}".format(clean))
+
+    clock = {"mode": "clock", "start": "19:59:50", "duration_seconds": 30,
+             "format": "12h", "show_seconds": True, "show_millis": False,
+             "style": "classic", "accent": "#e8b44f"}
+    clean = app.validate_timer_options(clock)
+    check("a well-formed clock payload comes back with mode='clock'",
+          clean.get("mode") == "clock" and clean.get("start") == "19:59:50",
+          "got {0!r}".format(clean))
+
+    def expect_error(label, payload, contains):
+        try:
+            app.validate_timer_options(payload)
+            check(label, False, "no error raised")
+        except app.ValidationError as exc:
+            check(label, contains in str(exc), "got {0!r}".format(str(exc)))
+
+    expect_error("a malformed start time is rejected",
+                 dict(clock, start="25:00:00"), "Start time must look like")
+    expect_error("bar style is refused for the clock",
+                 dict(clock, style="bar"), "Bar style isn't available")
+    expect_error("duration_seconds below 5 is rejected",
+                 dict(clock, duration_seconds=2), "Clip length must be")
+    expect_error("duration_seconds above 1800 is rejected",
+                 dict(clock, duration_seconds=1801), "Clip length must be")
+
+
 def check_stats_privacy():
     """What the anonymous error reports may contain, and what they may not."""
     import stats
@@ -462,6 +557,24 @@ def main():
                 quiet_progress)
             rendered.append(("timer/" + style, fn, 8.0))
 
+        # Clock mode: classic with millis on (30 fps path), and ring with
+        # millis off (10 fps path) — starts chosen to actually cross a
+        # rollover (8 PM, then midnight) during the clip, not just sit
+        # still, since that's exactly where an off-by-one would show up.
+        fn = render_timer(
+            {"mode": "clock", "start": "19:59:57", "duration_seconds": 6,
+             "format": "12h", "show_seconds": True, "show_millis": True,
+             "style": "classic", "accent": "#e8b44f"},
+            quiet_progress)
+        rendered.append(("clock/classic-12h-millis", fn, 6.0))
+
+        fn = render_timer(
+            {"mode": "clock", "start": "23:59:55", "duration_seconds": 6,
+             "format": "24h", "show_seconds": True, "show_millis": False,
+             "style": "ring", "accent": "#e8b44f"},
+            quiet_progress)
+        rendered.append(("clock/ring-24h", fn, 6.0))
+
         fn = render_spinner(
             {"entries": ["Alice", "Bob", "Carol", "Dave"],
              "mode": "rigged", "winner": "Carol", "accent": "#e8b44f"},
@@ -496,6 +609,10 @@ def main():
             if os.path.isfile(path):
                 os.unlink(path)
 
+    print()
+    check_clock_format()
+    print()
+    check_clock_validation()
     print()
     check_stats_privacy()
     print()

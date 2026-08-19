@@ -55,7 +55,10 @@ switch in the footer. The full list of events lives in [`stats.py`](stats.py).
    and configure it. The live
    preview shows what you'll get before you spend any render time.
    - **Timer**: duration, three styles (Classic / Ring / Bar), accent colour,
-     warn colour in the final 10 seconds, hold at 0:00.
+     warn colour in the final 10 seconds, hold at 0:00 — or switch its MODE
+     to **Clock** for a live wall clock that ticks forward from a start
+     time you choose, in Classic or Ring style, 12- or 24-hour format, with
+     optional seconds and milliseconds.
    - **Spinner**: one entry per line (2–100), Random or Choose-winner mode,
      accent colour. Try **Test Spin** in the preview. **Fill with AI** can
      top up the wheel — type what you need (e.g. "books of the Bible", "world

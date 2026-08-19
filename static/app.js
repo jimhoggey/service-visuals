@@ -76,6 +76,8 @@
     return isFinite(n) ? n : fallback;
   }
 
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
   function currentAccent(kind) {
     var checked = document.querySelector('input[name="' + kind + '-accent"]:checked');
     if (checked) return checked.value;
@@ -262,15 +264,27 @@
 
   // ============================================================ TIMER ======
 
+  // mode is "countdown" (default, untouched behaviour) or "clock" — a wall
+  // clock that starts at a chosen time and ticks forward in real time.
   function readTimer() {
     var styleEl = document.querySelector('input[name="timer-style"]:checked');
+    var modeEl = document.querySelector('input[name="timer-mode"]:checked');
+    var formatEl = document.querySelector('input[name="timer-clock-format"]:checked');
     return {
+      mode: modeEl ? modeEl.value : "countdown",
       minutes: toInt($("timer-minutes").value, 0),
       seconds: toInt($("timer-seconds").value, 0),
       style: styleEl ? styleEl.value : "classic",
       accent: currentAccent("timer"),
       warn: $("timer-warn").checked,
-      hold: toInt($("timer-hold").value, 5)
+      hold: toInt($("timer-hold").value, 5),
+      clockHours: toInt($("timer-clock-hours").value, 19),
+      clockMinutes: toInt($("timer-clock-minutes").value, 59),
+      clockSeconds: toInt($("timer-clock-seconds").value, 50),
+      clockLength: toInt($("timer-clock-length").value, 30),
+      clockFormat: formatEl ? formatEl.value : "12h",
+      showSeconds: $("timer-clock-show-seconds").checked,
+      showMillis: $("timer-clock-show-millis").checked
     };
   }
 
@@ -291,7 +305,30 @@
     return null;
   }
 
+  // Messages mirror validate_timer_options()'s clock branch in app.py exactly.
+  function validateTimerClockStart() {
+    var h = intFrom($("timer-clock-hours"));
+    var m = intFrom($("timer-clock-minutes"));
+    var s = intFrom($("timer-clock-seconds"));
+    if (h === null || h < 0 || h > 23 ||
+        m === null || m < 0 || m > 59 ||
+        s === null || s < 0 || s > 59) {
+      return "Start time must look like 19:59:50 (24-hour, hours 0-23).";
+    }
+    return null;
+  }
+
+  function validateTimerClockLength() {
+    var s = intFrom($("timer-clock-length"));
+    if (s === null || s < 5 || s > 1800) {
+      return "Clip length must be a whole number between 5 and 1800 seconds.";
+    }
+    return null;
+  }
+
   function validateTimer() {
+    var t = readTimer();
+    if (t.mode === "clock") return validateTimerClockStart() || validateTimerClockLength();
     return validateTimerDuration() || validateTimerHold();
   }
 
@@ -310,19 +347,26 @@
   }
 
   // Fixed-width slots: every digit centred in a slot as wide as the widest
-  // digit; colon slot is 55% of that (mirrors _digits_metrics in timer.py).
+  // digit; colon slot is 55% of that, "." slot 40% (mirrors _digits_metrics
+  // in timer.py — the "." slot only matters to clock mode's milliseconds).
   function digitMetrics(ctx, px) {
     ctx.font = "700 " + px + "px " + FONT_DIGITS;
     var slot = 0;
     "0123456789".split("").forEach(function (ch) {
       slot = Math.max(slot, ctx.measureText(ch).width);
     });
-    return { px: px, slot: slot, colon: slot * 0.55 };
+    return { px: px, slot: slot, colon: slot * 0.55, dot: slot * 0.40 };
+  }
+
+  function slotWidth(ch, met) {
+    if (ch === ":") return met.colon;
+    if (ch === ".") return met.dot;
+    return met.slot;
   }
 
   function clockWidth(text, met) {
     var w = 0;
-    text.split("").forEach(function (ch) { w += (ch === ":") ? met.colon : met.slot; });
+    text.split("").forEach(function (ch) { w += slotWidth(ch, met); });
     return w;
   }
 
@@ -333,10 +377,157 @@
     ctx.textBaseline = "middle";
     var x = cx - clockWidth(text, met) / 2;
     text.split("").forEach(function (ch) {
-      var w = (ch === ":") ? met.colon : met.slot;
+      var w = slotWidth(ch, met);
       ctx.fillText(ch, x + w / 2, cy);
       x += w;
     });
+  }
+
+  // ---- clock-mode display rules (spec: docs/specs/clock-mode.md) ----------
+  // Mirrors format_clock_time() in render/timer.py so the preview always
+  // shows the exact string the renderer's first frame will. Returns the
+  // pieces separately (not one string) because the main digits, the millis
+  // suffix and the AM/PM tag are drawn at three different sizes/colours.
+  function formatClockTime(totalMs, fmt, showSeconds, showMillis) {
+    var DAY_MS = 24 * 3600 * 1000;
+    var t = ((totalMs % DAY_MS) + DAY_MS) % DAY_MS;
+    var ms = t % 1000;
+    var totalSec = Math.floor(t / 1000);
+    var hh = Math.floor(totalSec / 3600);
+    var mm = Math.floor((totalSec % 3600) / 60);
+    var ss = totalSec % 60;
+
+    var tag = "";
+    var hourStr;
+    if (fmt === "12h") {
+      var h12 = hh % 12;
+      if (h12 === 0) h12 = 12;
+      hourStr = String(h12);
+      tag = hh < 12 ? "AM" : "PM";
+    } else {
+      hourStr = pad2(hh);
+    }
+
+    var base = hourStr + ":" + pad2(mm);
+    var millis = "";
+    if (showMillis) {
+      base += ":" + pad2(ss);
+      millis = "." + ("00" + ms).slice(-3);
+    } else if (showSeconds) {
+      base += ":" + pad2(ss);
+    }
+    return { base: base, millis: millis, tag: tag };
+  }
+
+  // The label shown under the "Start time" fields, e.g. "Shows as 7:59:50 PM".
+  function timerClockStartLabel(t) {
+    var totalMs = (t.clockHours * 3600 + t.clockMinutes * 60 + t.clockSeconds) * 1000;
+    var f = formatClockTime(totalMs, t.clockFormat, t.showSeconds, t.showMillis);
+    return f.base + f.millis + (f.tag ? " " + f.tag : "");
+  }
+
+  // AM/PM is drawn at a FIXED width (the wider of the two measured) so
+  // switching formats never shifts the clock — same rule as the renderer.
+  function tagWidth(ctx, px) {
+    ctx.font = "700 " + px + "px " + FONT_LABEL;
+    return Math.max(ctx.measureText("AM").width, ctx.measureText("PM").width);
+  }
+
+  function clockCompositeWidth(ctx, base, millis, tag, px) {
+    var met = digitMetrics(ctx, px);
+    var w = clockWidth(base, met);
+    if (millis) {
+      var mpx = Math.max(1, Math.round(px * 0.55));
+      w += clockWidth(millis, digitMetrics(ctx, mpx));
+    }
+    if (tag) {
+      var tpx = Math.max(1, Math.round(px * 0.28));
+      w += met.colon + tagWidth(ctx, tpx);
+    }
+    return w;
+  }
+
+  // Draws "base" (main digits, full size) + "millis" (55% size, same
+  // colour, same baseline) + "tag" (28% size, accent colour, one colon-slot
+  // gap after the last digit) as a single centred line. Can't reuse
+  // drawClock() directly — that draws one string at one uniform size — but
+  // reuses its digitMetrics()/clockWidth() geometry throughout.
+  function drawClockComposite(ctx, base, millis, tag, cx, cy, px, color, accent) {
+    var totalW = clockCompositeWidth(ctx, base, millis, tag, px);
+    var met = digitMetrics(ctx, px);
+    var x = cx - totalW / 2;
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    var baseY = cy + px * 0.34;   // digits' shared baseline, centred overall
+
+    ctx.font = "700 " + px + "px " + FONT_DIGITS;
+    ctx.fillStyle = color;
+    base.split("").forEach(function (ch) {
+      var w = slotWidth(ch, met);
+      ctx.fillText(ch, x + w / 2, baseY);
+      x += w;
+    });
+
+    if (millis) {
+      var mpx = Math.max(1, Math.round(px * 0.55));
+      var mmet = digitMetrics(ctx, mpx);
+      ctx.font = "700 " + mpx + "px " + FONT_DIGITS;
+      millis.split("").forEach(function (ch) {
+        var w = slotWidth(ch, mmet);
+        ctx.fillText(ch, x + w / 2, baseY);
+        x += w;
+      });
+    }
+
+    if (tag) {
+      x += met.colon;
+      var tpx = Math.max(1, Math.round(px * 0.28));
+      var tw = tagWidth(ctx, tpx);
+      ctx.font = "700 " + tpx + "px " + FONT_LABEL;
+      ctx.fillStyle = accent;
+      ctx.fillText(tag, x + tw / 2, baseY);
+    }
+  }
+
+  // Clock mode's preview: always the FIRST frame (elapsed = 0), so seconds
+  // come straight from the chosen start time and milliseconds are always
+  // exactly .000 (ms = round(i * 1000 / fps), i = 0) — never wall-clock time.
+  function drawClockTimerPreview(ctx, t) {
+    var totalMs = (t.clockHours * 3600 + t.clockMinutes * 60 + t.clockSeconds) * 1000;
+    var f = formatClockTime(totalMs, t.clockFormat, t.showSeconds, t.showMillis);
+
+    if (t.style === "ring") {
+      // render: centreline radius 400, thickness 26, digits 190px (all at 2x)
+      var R = 200, thick = 13;
+      ctx.lineWidth = thick;
+      ctx.strokeStyle = TRACK;
+      ctx.beginPath();
+      ctx.arc(PW / 2, PH / 2, R, 0, Math.PI * 2);
+      ctx.stroke();
+      // the ring is a SECONDS hand here, not a remaining-time arc: it fills
+      // over each minute and resets on the minute (frac = sec/60 on frame 0).
+      var frac = t.clockSeconds / 60;
+      if (frac > 0) {
+        ctx.strokeStyle = t.accent;
+        ctx.beginPath();
+        ctx.arc(PW / 2, PH / 2, R, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+        ctx.stroke();
+      }
+      // Fit to the ring's inner diameter (702px full res -> 351 here),
+      // capped at the countdown ring's 190px (95 here): "7:59" sits at the
+      // familiar size, "19:59:50.000" shrinks to clear the track — mirrors
+      // RING_INNER_FIT / RING_DIGITS_MAX in render/timer.py.
+      var rw = clockCompositeWidth(ctx, f.base, f.millis, f.tag, 100);
+      var rpx = rw > 0 ? Math.max(30, Math.min(95, Math.round(100 * 351 / rw))) : 95;
+      drawClockComposite(ctx, f.base, f.millis, f.tag, PW / 2, PH / 2, rpx, TEXT_LIGHT, t.accent);
+    } else {
+      // classic: auto-size the FULL string (incl. millis + tag) to fit
+      // 1600px at full res (800 here), capped at 400 (200 here).
+      var w = clockCompositeWidth(ctx, f.base, f.millis, f.tag, 100);
+      var px = w > 0 ? Math.max(30, Math.min(200, Math.round(100 * 800 / w))) : 200;
+      drawClockComposite(ctx, f.base, f.millis, f.tag, PW / 2, PH / 2, px, TEXT_LIGHT, t.accent);
+    }
   }
 
   function drawTimerPreview() {
@@ -345,6 +536,8 @@
     paintBackground(ctx);
 
     var t = readTimer();
+    if (t.mode === "clock") { drawClockTimerPreview(ctx, t); return; }
+
     var total = Math.max(0, t.minutes * 60 + t.seconds);
     var text = formatClock(total, total);
     // renderer: accent digits whenever remaining <= 10s (first frame shown here)
@@ -381,12 +574,20 @@
     }
   }
 
-  // Rough estimate: the worker feeds (total+hold)*input_fps frames and chews
-  // through roughly 30 of them a second on this class of machine.
+  // Rough estimate: the worker feeds a number of INPUT frames and chews
+  // through roughly 30 of them a second on this class of machine. Clock
+  // mode's frame rate rule (docs/specs/clock-mode.md "Frame rate"): millis
+  // on -> 30fps input; millis off -> 1fps (classic) or 10fps (ring) input.
   function timerEstimateText(t) {
-    var total = t.minutes * 60 + t.seconds;
-    var fps = (t.style === "classic") ? 1 : (total <= 600 ? 10 : (total <= 1800 ? 4 : 2));
-    var frames = (total + t.hold) * fps;
+    var frames;
+    if (t.mode === "clock") {
+      var fps = t.showMillis ? 30 : (t.style === "ring" ? 10 : 1);
+      frames = t.clockLength * fps;
+    } else {
+      var total = t.minutes * 60 + t.seconds;
+      var fps2 = (t.style === "classic") ? 1 : (total <= 600 ? 10 : (total <= 1800 ? 4 : 2));
+      frames = (total + t.hold) * fps2;
+    }
     var sec = Math.max(2, Math.round(frames / 30));
     var label;
     if (sec < 60) {
@@ -398,24 +599,90 @@
     return "EST. RENDER ~" + label + " (rough)";
   }
 
+  // Clock mode swaps the right-hand column of controls for a different set
+  // (start time / clip length / format / display) and hides BAR, which makes
+  // no sense for a clock (nothing depletes). Runs on every updateTimer()
+  // call so it always reflects the live mode/checkbox state — same pattern
+  // as the spinner's winner-row toggle in updateSpinner().
+  function applyTimerMode() {
+    var modeEl = document.querySelector('input[name="timer-mode"]:checked');
+    var mode = modeEl ? modeEl.value : "countdown";
+    var isClock = mode === "clock";
+
+    $("timer-style-bar-opt").hidden = isClock;
+    if (isClock && $("timer-style-bar").checked) $("timer-style-classic").checked = true;
+    $("timer-style-pick").classList.toggle("is-two", isClock);
+
+    $("timer-duration-group").hidden = isClock;
+    $("timer-options-group").hidden = isClock;
+    $("timer-clock-start-group").hidden = !isClock;
+    $("timer-clock-length-group").hidden = !isClock;
+    $("timer-clock-format-group").hidden = !isClock;
+    $("timer-clock-display-group").hidden = !isClock;
+
+    // Milliseconds need seconds — force it on and lock the box while millis
+    // is checked (spec: "Ticking it also ticks/locks Show seconds").
+    var millisOn = $("timer-clock-show-millis").checked;
+    if (millisOn) $("timer-clock-show-seconds").checked = true;
+    $("timer-clock-show-seconds").disabled = millisOn;
+
+    return mode;
+  }
+
   function updateTimer() {
-    var durationErr = validateTimerDuration();
-    var holdErr = validateTimerHold();
-    var err = durationErr || holdErr;
+    var mode = applyTimerMode();
+    var t = readTimer();
+    var err;
+
+    if (mode === "clock") {
+      var startErr = validateTimerClockStart();
+      var lengthErr = validateTimerClockLength();
+      err = startErr || lengthErr;
+      var startHint = $("timer-clock-start-hint");
+      startHint.textContent = startErr || ("Shows as " + timerClockStartLabel(t));
+      startHint.classList.toggle("is-bad", !!startErr);
+      var lengthHint = $("timer-clock-length-hint");
+      lengthHint.textContent = lengthErr || "5 seconds to 30 minutes";
+      lengthHint.classList.toggle("is-bad", !!lengthErr);
+    } else {
+      var durationErr = validateTimerDuration();
+      var holdErr = validateTimerHold();
+      err = durationErr || holdErr;
+      var hint = $("timer-duration-hint");
+      hint.textContent = durationErr || "5 seconds to 120 minutes";
+      hint.classList.toggle("is-bad", !!durationErr);
+      var holdHint = $("timer-hold-hint");
+      holdHint.textContent = holdErr || "0 to 30 seconds";
+      holdHint.classList.toggle("is-bad", !!holdErr);
+      $("timer-hold").setAttribute("aria-invalid", holdErr ? "true" : "false");
+    }
+
     $("timer-export").disabled = exportBusy["timer"] || (!!err);
-    var hint = $("timer-duration-hint");
-    hint.textContent = durationErr || "5 seconds to 120 minutes";
-    hint.classList.toggle("is-bad", !!durationErr);
-    var holdHint = $("timer-hold-hint");
-    holdHint.textContent = holdErr || "0 to 30 seconds";
-    holdHint.classList.toggle("is-bad", !!holdErr);
-    $("timer-hold").setAttribute("aria-invalid", holdErr ? "true" : "false");
-    $("timer-estimate").textContent = err ? "EST. RENDER — (rough)" : timerEstimateText(readTimer());
+    $("timer-estimate").textContent = err ? "EST. RENDER — (rough)" : timerEstimateText(t);
     drawTimerPreview();
   }
 
+  // Sends exactly the API contract in docs/specs/clock-mode.md: only clock
+  // keys in clock mode, only countdown keys in countdown mode (which stays
+  // byte-for-byte what it always sent — no "mode" key at all — so the
+  // backend's untouched countdown path never has to guess).
   function timerPayload() {
     var t = readTimer();
+    if (t.mode === "clock") {
+      return {
+        type: "timer",
+        options: {
+          mode: "clock",
+          start: pad2(t.clockHours) + ":" + pad2(t.clockMinutes) + ":" + pad2(t.clockSeconds),
+          duration_seconds: t.clockLength,
+          format: t.clockFormat,
+          show_seconds: t.showSeconds,
+          show_millis: t.showMillis,
+          style: t.style,
+          accent: t.accent
+        }
+      };
+    }
     return {
       type: "timer",
       options: {
@@ -2180,6 +2447,15 @@
       chip.addEventListener("click", function () {
         $("timer-minutes").value = chip.dataset.minutes;
         $("timer-seconds").value = "0";
+        updateTimer();
+      });
+    }
+  );
+  Array.prototype.forEach.call(
+    document.querySelectorAll("#timer-clock-presets .chip"),
+    function (chip) {
+      chip.addEventListener("click", function () {
+        $("timer-clock-length").value = chip.dataset.seconds;
         updateTimer();
       });
     }

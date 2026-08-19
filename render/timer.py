@@ -44,6 +44,10 @@ DIGITS_COLOR = (242, 240, 235)   # #f2f0eb
 DEFAULT_ACCENT = (232, 180, 79)  # #e8b44f
 
 STYLES = ("classic", "ring", "bar")
+# Clock mode has no "depletes to zero" story, so a shrinking bar doesn't
+# make sense for it — only classic and ring are offered (app.py enforces
+# this at validation time; kept here too so the renderer never guesses).
+CLOCK_STYLES = ("classic", "ring")
 
 # ---- ring geometry -----------------------------------------------------------
 RING_CX, RING_CY = WIDTH // 2, HEIGHT // 2
@@ -144,6 +148,36 @@ def _ring_mask(frac):
     return m.reduce(s)
 
 
+def _ring_seconds_mask(frac):
+    """Anti-aliased L mask (tile-sized) of the clock's seconds-hand fill.
+
+    Mirror image of _ring_mask: instead of a full ring that DEPLETES
+    clockwise from 12 as frac shrinks (countdown), this is an EMPTY ring
+    that FILLS clockwise from 12 as frac grows, so at frac=0 (the top of a
+    minute) nothing is drawn and at frac=1 (the next top of the minute) the
+    circle is complete — a plain "arc from 270 degrees, sweeping clockwise
+    by frac*360 degrees" rather than _ring_mask's pinned-at-12 remainder
+    arc, so the two never share code paths (and countdown pixels can't be
+    touched by a clock-only change).
+    """
+    s = _RING_SS
+    size = _RING_TILE * s
+    m = Image.new("L", (size, size), 0)
+    frac = max(0.0, min(1.0, frac))
+    extent = 360.0 * frac
+    if extent > 0.05:
+        d = ImageDraw.Draw(m)
+        c = size / 2.0
+        outer = (RING_RADIUS + RING_THICKNESS / 2.0) * s
+        bbox = [c - outer, c - outer, c + outer, c + outer]
+        if extent >= 359.95:
+            d.arc(bbox, 0, 360, fill=255, width=RING_THICKNESS * s)
+        else:
+            d.arc(bbox, 270.0, 270.0 + extent, fill=255,
+                  width=RING_THICKNESS * s)
+    return m.reduce(s)
+
+
 def _draw_capsule(draw, x0, y0, x1, y1, fill):
     """Filled rectangle with fully rounded (semicircular) ends."""
     w, h = x1 - x0, y1 - y0
@@ -188,13 +222,23 @@ def _digits_metrics(size):
         "font": font,
         "slot": slot,
         "colon": slot * 0.55,
+        "dot": slot * 0.40,            # clock-mode millis separator only;
+                                        # countdown text never contains "."
         "baseline_off": ascent - y0,   # baseline, measured from glyph top
         "glyph_h": y1 - y0,
     }
 
 
+def _slot_width(ch, met):
+    if ch == ":":
+        return met["colon"]
+    if ch == ".":
+        return met["dot"]
+    return met["slot"]
+
+
 def _text_width(text, met):
-    return sum(met["colon"] if ch == ":" else met["slot"] for ch in text)
+    return sum(_slot_width(ch, met) for ch in text)
 
 
 def _render_digits(text, color, met):
@@ -202,7 +246,9 @@ def _render_digits(text, color, met):
 
     A leading space occupies (but leaves empty) a full digit slot, so a
     space-padded shorter time keeps the exact same block width and slot
-    positions as the initial one.
+    positions as the initial one. "." (clock-mode millis only) gets its own
+    narrower slot; countdown text never contains one, so this is a no-op
+    for every existing caller.
     """
     w = int(math.ceil(_text_width(text, met))) + 2 * _DIGITS_PAD
     h = int(math.ceil(met["glyph_h"])) + 2 * _DIGITS_PAD
@@ -211,7 +257,7 @@ def _render_digits(text, color, met):
     baseline = _DIGITS_PAD + met["baseline_off"]
     x = float(_DIGITS_PAD)
     for ch in text:
-        cw = met["colon"] if ch == ":" else met["slot"]
+        cw = _slot_width(ch, met)
         # 'ms' anchor: horizontally centered in the slot, on the shared
         # baseline -> zero jitter in either axis.
         if ch != " ":
@@ -261,17 +307,292 @@ def _input_fps(style, total):
     return 2
 
 
+# ---- clock mode ------------------------------------------------------------
+#
+# format_clock_time is a pure function (no fonts, no Image) so scripts/smoke
+# can exercise midnight/noon wrap-around and millis exactness directly.
+
+CLOCK_MS_SCALE = 0.55    # millis are drawn at 55% of the main digit size
+CLOCK_TAG_SCALE = 0.28   # the AM/PM tag at 28%
+_DAY_MS = 24 * 60 * 60 * 1000
+
+
+def format_clock_time(total_ms, fmt, show_seconds, show_millis):
+    """Pure clock-mode display formatter — the contract the renderer AND
+    the JS preview must both match exactly (see docs/specs/clock-mode.md).
+
+    `total_ms` is milliseconds since midnight; it wraps at 24h so a start
+    of 23:59:55 plus 10s elapsed comes back as 00:00:05 (a real clock
+    rolling over, not an error). Returns (main_text, tag):
+
+      * `tag` is "AM"/"PM" in 12-hour format, "" in 24-hour format.
+      * `main_text` is the digit string, with milliseconds (when shown)
+        baked onto the end as ".mmm" — always exactly 4 characters, so a
+        caller that needs to draw them smaller can split them off with
+        `main_text[-4:]` / `main_text[:-4]` rather than re-deriving them.
+    """
+    if show_millis:
+        show_seconds = True   # can't show millis without seconds
+    total_ms = total_ms % _DAY_MS
+    total_seconds = total_ms // 1000
+    ms = total_ms % 1000
+    h = (total_seconds // 3600) % 24
+    m = (total_seconds % 3600) // 60
+    s = total_seconds % 60
+
+    tag = ""
+    if fmt == "12h":
+        tag = "AM" if h < 12 else "PM"
+        h12 = h % 12
+        h_str = str(h12 if h12 else 12)   # midnight/noon both display "12"
+    else:
+        h_str = "{0:02d}".format(h)
+
+    if show_millis:
+        main = "{0}:{1:02d}:{2:02d}.{3:03d}".format(h_str, m, s, ms)
+    elif show_seconds:
+        main = "{0}:{1:02d}:{2:02d}".format(h_str, m, s)
+    else:
+        main = "{0}:{1:02d}".format(h_str, m)
+    return main, tag
+
+
+# Inside the ring the time must clear the track on both sides. The ring's
+# inner edge is at RING_RADIUS - RING_THICKNESS/2 = 387px from centre; leave
+# 36px of air each side.
+RING_INNER_FIT = 2 * (RING_RADIUS - RING_THICKNESS // 2) - 72      # 702px
+RING_DIGITS_MAX = 190            # the countdown ring's digit size
+
+
+def _clock_font_size(main_text, show_millis, has_tag, fit_width=1600.0,
+                     cap=400):
+    """Auto-size clock digits: fit `fit_width` px wide, capped at `cap`.
+
+    Same ref-then-scale approach as _classic_font_size, generalised to the
+    clock's smaller millis (55%) and tag (28%) runs, which are drawn at a
+    fraction of the main size and so must contribute proportionally less
+    to the width being fitted. `main_text` excludes the ".mmm" suffix (the
+    caller splits it off, same convention as _render_clock uses to draw).
+
+    The ring style passes its own fit: the countdown ring's fixed 190px is
+    right for "5:00" and "10:00", but a 24-hour clock with milliseconds is
+    "19:59:50.000" — twelve slots — and at 190px that ran straight through
+    the track on both sides. So the ring fits to its inner diameter, still
+    capped at 190 so the short strings look exactly like the countdown.
+    """
+    ref = 200
+    met_main = _digits_metrics(ref)
+    w = _text_width(main_text, met_main)
+    if show_millis:
+        met_ms = _digits_metrics(max(1, int(round(ref * CLOCK_MS_SCALE))))
+        w += _text_width(".000", met_ms)
+    if has_tag:
+        tag_size = max(1, int(round(ref * CLOCK_TAG_SCALE)))
+        tag_font = fonts.load("digits", tag_size)
+        w += met_main["colon"] + max(tag_font.getlength("AM"),
+                                     tag_font.getlength("PM"))
+    if w <= 0:
+        return cap
+    fit = int(ref * fit_width / w)
+    return max(60, min(cap, fit))
+
+
+def _render_clock_block(main_text, ms_text, tag, color, tag_color,
+                        met_main, met_ms, tag_font, tag_width):
+    """RGBA block combining the main digits, an optional smaller millis
+    run and an optional AM/PM tag on one shared baseline.
+
+    This is the clock's answer to _render_digits, which only ever draws
+    one run at one size and one colour; here up to three runs at three
+    sizes share a canvas. The trick is the same 'ms' anchor _render_digits
+    uses: every d.text() call is given the SAME baseline y regardless of
+    its own font's metrics, so mixing font sizes never misaligns them.
+    `ms_text` is "" with millis off; `tag` is "" in 24-hour format.
+    `tag_width` is the wider of "AM"/"PM" at the tag's own font size, so
+    switching between them is a fixed-width slot — nothing else shifts.
+    """
+    gap = met_main["colon"] if tag else 0.0
+    main_w = _text_width(main_text, met_main)
+    ms_w = _text_width(ms_text, met_ms) if ms_text else 0.0
+    total_w = main_w + ms_w + (gap + tag_width if tag else 0.0)
+
+    h = int(math.ceil(met_main["glyph_h"])) + 2 * _DIGITS_PAD
+    w = int(math.ceil(total_w)) + 2 * _DIGITS_PAD
+    block = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(block)
+    baseline = _DIGITS_PAD + met_main["baseline_off"]
+
+    x = float(_DIGITS_PAD)
+    for ch in main_text:
+        cw = _slot_width(ch, met_main)
+        if ch != " ":
+            d.text((x + cw / 2.0, baseline), ch, font=met_main["font"],
+                   fill=color + (255,), anchor="ms")
+        x += cw
+    for ch in ms_text:
+        cw = _slot_width(ch, met_ms)
+        if ch != " ":
+            d.text((x + cw / 2.0, baseline), ch, font=met_ms["font"],
+                   fill=color + (255,), anchor="ms")
+        x += cw
+    if tag:
+        x += gap
+        d.text((x + tag_width / 2.0, baseline), tag, font=tag_font,
+              fill=tag_color + (255,), anchor="ms")
+        x += tag_width
+    return block
+
+
+def _render_clock(options, progress_cb):
+    """Render a wall-clock MP4 (mode "clock"); returns the output basename.
+
+    options (already normalised by app.validate_timer_options): start
+    "HH:MM:SS", duration_seconds 5..1800, format "12h"|"24h", show_seconds
+    / show_millis bool, style "classic"|"ring", accent "#rrggbb". Ticks
+    forward from `start` in real time for `duration_seconds`, wrapping at
+    24h like a real clock — it is not a countdown, so there is no hold and
+    no warn colour.
+    """
+    options = options or {}
+    if progress_cb is None:
+        progress_cb = lambda pct: None  # noqa: E731
+
+    start = str(options.get("start", "19:59:50"))
+    m = re.fullmatch(r"(\d{2}):(\d{2}):(\d{2})", start)
+    # app.py already rejects a malformed start before this is ever called;
+    # the fallback below only guards a renderer called directly (tests).
+    sh, sm, ss = (int(g) for g in m.groups()) if m else (19, 59, 50)
+    start_ms = (sh * 3600 + sm * 60 + ss) * 1000
+
+    duration = max(5, min(1800, _to_int(options.get("duration_seconds"), 30)))
+    fmt = options.get("format", "12h")
+    if fmt not in ("12h", "24h"):
+        fmt = "12h"
+    show_seconds = bool(options.get("show_seconds", True))
+    show_millis = bool(options.get("show_millis", False))
+    if show_millis:
+        show_seconds = True
+    style = str(options.get("style", "classic")).lower()
+    if style not in CLOCK_STYLES:
+        style = "classic"
+    accent = _parse_hex(options.get("accent"), DEFAULT_ACCENT)
+    has_tag = fmt == "12h"
+
+    if show_millis:
+        fps, out_fps = 30, 30      # every frame unique, see module docstring
+    else:
+        fps = 1 if style == "classic" else 10
+        out_fps = TIMER_OUTPUT_FPS
+    total_frames = duration * fps
+
+    # Static layers: vignette + this style's track, built once (identical to
+    # the countdown ring/bar setup — the shared _background/_ring_mask are
+    # untouched by clock mode).
+    bg = _background().copy()
+    accent_tile = None
+    if style == "ring":
+        bg.paste(Image.new("RGB", (_RING_TILE, _RING_TILE), TRACK),
+                 _RING_ORIGIN, _ring_mask(1.0))
+        accent_tile = Image.new("RGB", (_RING_TILE, _RING_TILE), accent)
+
+    sample_main, _sample_tag = format_clock_time(
+        start_ms, fmt, show_seconds, show_millis)
+    sample_big = sample_main[:-4] if show_millis else sample_main
+
+    if style == "ring":
+        size = _clock_font_size(sample_big, show_millis, has_tag,
+                                RING_INNER_FIT, RING_DIGITS_MAX)
+        digits_cy = RING_CY
+    else:
+        size = _clock_font_size(sample_big, show_millis, has_tag)
+        digits_cy = HEIGHT // 2
+    met_main = _digits_metrics(size)
+    met_ms = _digits_metrics(max(1, int(round(size * CLOCK_MS_SCALE))))
+    tag_font = fonts.load("digits", max(1, int(round(size * CLOCK_TAG_SCALE))))
+    tag_width = max(tag_font.getlength("AM"), tag_font.getlength("PM"))
+
+    out_path = export_path(
+        "clock", "{0:02d}{1:02d}-{2:02d}_{3}s_{4}".format(
+            sh, sm, ss, duration, style))
+
+    # Same per-second base cache as the countdown's base_for, but keyed on
+    # the displayed text/tag rather than remaining seconds — skipped
+    # entirely when millis are on, since then every frame is unique anyway.
+    bases = OrderedDict()
+    bases_lock = threading.Lock()
+
+    def block_for(big, small, tag):
+        return _render_clock_block(
+            big, small, tag, DIGITS_COLOR, accent, met_main, met_ms,
+            tag_font, tag_width)
+
+    def base_for(big, small, tag):
+        key = (big, small, tag)
+        with bases_lock:
+            cached = bases.get(key)
+            if cached is not None:
+                bases.move_to_end(key)
+                return cached
+        block = block_for(big, small, tag)
+        base = bg.copy()
+        base.paste(block,
+                   (WIDTH // 2 - block.width // 2,
+                    digits_cy - block.height // 2),
+                   block)
+        with bases_lock:
+            bases[key] = base
+            while len(bases) > 16:
+                bases.popitem(last=False)
+        return base
+
+    def make_frame(i):
+        ms_elapsed = int(round(i * 1000.0 / fps))
+        total_ms = start_ms + ms_elapsed
+        main_text, tag = format_clock_time(
+            total_ms, fmt, show_seconds, show_millis)
+        if show_millis:
+            big, small = main_text[:-4], main_text[-4:]
+            block = block_for(big, small, tag)
+            base = bg.copy()
+            base.paste(block,
+                       (WIDTH // 2 - block.width // 2,
+                        digits_cy - block.height // 2),
+                       block)
+        else:
+            base = base_for(main_text, "", tag)
+        if style != "ring":
+            return base
+        frame = base.copy()
+        sec_in_minute = (total_ms % _DAY_MS % 60000) / 1000.0
+        frac = sec_in_minute / 60.0
+        if frac > 0.0:
+            frame.paste(accent_tile, _RING_ORIGIN, _ring_seconds_mask(frac))
+        return frame
+
+    encode_parallel(out_path, fps, total_frames, make_frame, progress_cb,
+                    output_fps=out_fps)
+    return os.path.basename(out_path)
+
+
 # ---- main entry point -----------------------------------------------------------
 
 def render_timer(options, progress_cb):
-    """Render a countdown timer MP4; returns the output filename basename.
+    """Render a timer MP4; returns the output filename basename.
 
-    options: minutes, seconds (total 5..7200 s), style classic|ring|bar,
-             accent '#rrggbb', warn_last10 bool, hold_seconds 0..30.
-    Counts down from the total to 0:00, then holds at 0:00 for hold_seconds
-    (at least one full second of 0:00 is always shown, even with hold 0).
+    Dispatches on options["mode"]: "clock" renders a live wall clock
+    (_render_clock, below); anything else — including the key being absent
+    — is the original countdown, byte-for-byte unchanged.
+
+    Countdown options: minutes, seconds (total 5..7200 s), style
+    classic|ring|bar, accent '#rrggbb', warn_last10 bool, hold_seconds
+    0..30. Counts down from the total to 0:00, then holds at 0:00 for
+    hold_seconds (at least one full second of 0:00 is always shown, even
+    with hold 0).
     """
     options = options or {}
+    if options.get("mode") == "clock":
+        return _render_clock(options, progress_cb)
+
     if progress_cb is None:
         progress_cb = lambda pct: None  # noqa: E731
 

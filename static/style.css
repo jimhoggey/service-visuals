@@ -465,6 +465,9 @@ textarea:focus {
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
 }
+/* clock mode hides the BAR card — two cards read better as two columns
+   than three-with-a-gap. */
+.style-pick.is-two { grid-template-columns: repeat(2, 1fr); }
 
 .style-opt { display: block; position: relative; }
 

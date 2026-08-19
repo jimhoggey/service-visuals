@@ -43,7 +43,7 @@
           <circle cx="32" cy="36" r="3.5" fill="#e8b44f"/>
         </svg>
         <span class="tile-name">TIMER</span>
-        <span class="tile-desc">Countdown for pre-service, transitions and games. Classic, ring or bar.</span>
+        <span class="tile-desc">Countdown for pre-service, transitions and games &#8212; or a live clock counting to the moment. Classic, ring or bar.</span>
       </button>
 
       <button class="tile" id="tile-spinner" type="button">
@@ -124,7 +124,7 @@
   <section class="view" id="view-timer" aria-labelledby="timer-title" hidden>
     <div class="view-bar">
       <button class="btn btn-back" id="back-timer" type="button">&#8592; BACK</button>
-      <h2 class="view-title" id="timer-title" tabindex="-1">Countdown timer</h2>
+      <h2 class="view-title" id="timer-title" tabindex="-1">Timer</h2>
     </div>
 
     <div class="config-grid">
@@ -132,8 +132,22 @@
         <fieldset class="fields" id="timer-fields">
 
           <fieldset class="group">
+            <legend>Mode</legend>
+            <div class="seg-group">
+              <label class="seg">
+                <input class="vh" type="radio" name="timer-mode" id="timer-mode-countdown" value="countdown" checked>
+                <span>COUNTDOWN</span>
+              </label>
+              <label class="seg">
+                <input class="vh" type="radio" name="timer-mode" id="timer-mode-clock" value="clock">
+                <span>CLOCK</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="group">
             <legend>Style</legend>
-            <div class="style-pick">
+            <div class="style-pick" id="timer-style-pick">
               <label class="style-opt">
                 <input class="vh" type="radio" name="timer-style" id="timer-style-classic" value="classic" checked>
                 <span class="style-card">
@@ -148,7 +162,7 @@
                   <span class="style-name">RING</span>
                 </span>
               </label>
-              <label class="style-opt">
+              <label class="style-opt" id="timer-style-bar-opt">
                 <input class="vh" type="radio" name="timer-style" id="timer-style-bar" value="bar">
                 <span class="style-card">
                   <span class="mock mock-bar"><span>5:00</span><span class="mock-track"></span></span>
@@ -158,7 +172,7 @@
             </div>
           </fieldset>
 
-          <fieldset class="group">
+          <fieldset class="group" id="timer-duration-group">
             <legend>Duration</legend>
             <div class="duration-row">
               <div class="num-field">
@@ -179,6 +193,69 @@
               <button class="chip" type="button" data-minutes="15">15 MIN</button>
             </div>
             <p class="hint" id="timer-duration-hint">5 seconds to 120 minutes</p>
+          </fieldset>
+
+          <fieldset class="group" id="timer-clock-start-group" hidden>
+            <legend>Start time</legend>
+            <div class="duration-row">
+              <div class="num-field">
+                <label for="timer-clock-hours">HOURS</label>
+                <input type="number" id="timer-clock-hours" inputmode="numeric" min="0" max="23" step="1" value="19">
+              </div>
+              <span class="duration-colon" aria-hidden="true">:</span>
+              <div class="num-field">
+                <label for="timer-clock-minutes">MINUTES</label>
+                <input type="number" id="timer-clock-minutes" inputmode="numeric" min="0" max="59" step="1" value="59">
+              </div>
+              <span class="duration-colon" aria-hidden="true">:</span>
+              <div class="num-field">
+                <label for="timer-clock-seconds">SECONDS</label>
+                <input type="number" id="timer-clock-seconds" inputmode="numeric" min="0" max="59" step="1" value="50">
+              </div>
+            </div>
+            <p class="hint" id="timer-clock-start-hint">Shows as 7:59:50 PM</p>
+          </fieldset>
+
+          <fieldset class="group" id="timer-clock-length-group" hidden>
+            <legend>Clip length</legend>
+            <div class="num-field num-field-wide">
+              <label for="timer-clock-length">CLIP LENGTH (SECONDS)</label>
+              <input type="number" id="timer-clock-length" inputmode="numeric" min="5" max="1800" step="1" value="30">
+            </div>
+            <div class="chip-row" id="timer-clock-presets" role="group" aria-label="Clip length presets">
+              <button class="chip" type="button" data-seconds="15">15 S</button>
+              <button class="chip" type="button" data-seconds="30">30 S</button>
+              <button class="chip" type="button" data-seconds="60">1 MIN</button>
+              <button class="chip" type="button" data-seconds="300">5 MIN</button>
+            </div>
+            <p class="hint" id="timer-clock-length-hint">5 seconds to 30 minutes</p>
+          </fieldset>
+
+          <fieldset class="group" id="timer-clock-format-group" hidden>
+            <legend>Format</legend>
+            <div class="seg-group">
+              <label class="seg">
+                <input class="vh" type="radio" name="timer-clock-format" id="timer-clock-format-12h" value="12h" checked>
+                <span>12-HOUR</span>
+              </label>
+              <label class="seg">
+                <input class="vh" type="radio" name="timer-clock-format" id="timer-clock-format-24h" value="24h">
+                <span>24-HOUR</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="group" id="timer-clock-display-group" hidden>
+            <legend>Display</legend>
+            <div class="check-row">
+              <input type="checkbox" id="timer-clock-show-seconds" checked>
+              <label for="timer-clock-show-seconds">Show seconds</label>
+            </div>
+            <div class="check-row">
+              <input type="checkbox" id="timer-clock-show-millis">
+              <label for="timer-clock-show-millis">Show milliseconds</label>
+            </div>
+            <p class="hint">Renders at 30 fps &#8212; longer to export</p>
           </fieldset>
 
           <fieldset class="group">
@@ -211,7 +288,7 @@
             </div>
           </fieldset>
 
-          <fieldset class="group">
+          <fieldset class="group" id="timer-options-group">
             <legend>Options</legend>
             <div class="check-row">
               <input type="checkbox" id="timer-warn" checked>

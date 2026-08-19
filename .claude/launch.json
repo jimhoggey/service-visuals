@@ -4,8 +4,22 @@
     {
       "name": "service-visuals",
       "runtimeExecutable": "/Users/fynnj/Documents/Claude/Projects/ServiceVisualsCreations/.venv/bin/python",
-      "runtimeArgs": ["app.py"],
+      "runtimeArgs": [
+        "app.py"
+      ],
       "port": 8765
+    },
+    {
+      "name": "service-visuals-dev",
+      "runtimeExecutable": "/Users/fynnj/Documents/Claude/Projects/ServiceVisualsCreations/.venv/bin/python",
+      "runtimeArgs": [
+        "app.py"
+      ],
+      "env": {
+        "PORT": "8799",
+        "SERVICE_VISUALS_STATS": "0"
+      },
+      "port": 8799
     }
   ]
 }
