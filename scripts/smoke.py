@@ -445,6 +445,28 @@ def check_stats_privacy():
           where.startswith("smoke.py:") and "inner" in where.split(" < ")[0]
           and "/" not in where, "got {0!r}".format(where))
 
+    print()
+    print("Stats: export props and duration")
+    import app as _app
+    check("took buckets straddle their boundaries",
+          [_app._took_bucket(m) for m in (0, 4999, 5000, 14999, 15000,
+                                          59999, 60000, 299999, 300000)]
+          == ["<5s", "<5s", "5-15s", "5-15s", "15-60s",
+              "15-60s", "1-5m", "1-5m", ">5m"],
+          "bucket boundaries moved")
+    # The props are read off the options dict; an unvalidated value must
+    # never become an analytics prop.
+    nasty = {"mode": "Pink sparkly ponies", "style": "/Users/someone/x.png",
+             "backgrounds": ["a" * 16]}
+    tp = _app._timer_props(nasty)
+    check("timer props clamp to our own words",
+          tp == {"mode": "countdown", "style": "classic", "bg": "one"},
+          "got {0!r}".format(tp))
+    check("spinner props clamp",
+          _app._spinner_props({"mode": "../etc/passwd"}) == {"mode": "random"})
+    check("motionbg props clamp",
+          _app._motionbg_props({"style": "secret"}) == {"style": "aurora"})
+
     # Never sends when not asked to: no worker, no queue growth.
     before = stats._q.qsize()
     stats.track("crash", error="X")

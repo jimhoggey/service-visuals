@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.request
 import webbrowser
 
@@ -66,28 +67,84 @@ def _reject_foreign_hosts():
         return jsonify({"error": "Host not allowed."}), 403
 
 
+# How long a render took, as a bucket as well as a number. The raw figure is
+# what you chart; the bucket is what you can read at a glance in the Aptabase
+# dashboard, which lists a prop's distinct values — thousands of distinct
+# millisecond readings would be unreadable on their own.
+TOOK_BUCKETS = ((5000, "<5s"), (15000, "5-15s"), (60000, "15-60s"),
+                (300000, "1-5m"))
+
+
+def _took_bucket(ms):
+    for limit, label in TOOK_BUCKETS:
+        if ms < limit:
+            return label
+    return ">5m"
+
+
+def track_export(tool, started, **props):
+    """Record a finished export: what it was, and how long it took.
+
+    Duration is wall time around the renderer only — the queue wait is not
+    in it, so this is the machine's render speed rather than how busy the
+    app was. Rounded to a tenth of a second: nobody needs millisecond
+    precision and it keeps the number of distinct values down.
+    """
+    ms = int(round((time.time() - started) * 1000))
+    stats.track("export", tool=tool, render_ms=int(round(ms, -2)),
+                took=_took_bucket(ms), **props)
+
+
 def _counted(tool, fn, extra_props=None):
     """Count an export once it has actually produced a file."""
     def run(options, progress_cb):
+        started = time.time()
         filename = fn(options, progress_cb)
         props = extra_props(options) if extra_props else {}
-        stats.track("export", tool=tool, **props)
+        track_export(tool, started, **props)
         return filename
     return run
 
 
-def _timer_bg_prop(options):
-    """How many background images this timer export used — never a
-    filename or a real count, just a coarse bucket (stats.py's privacy
-    rule: props carry no content)."""
+# Every prop below is drawn from a fixed set of our own words — a mode, a
+# style name, a coarse bucket. None of them can carry what the operator
+# typed, uploaded or named (stats.py's privacy rule).
+
+def _one_of(value, allowed, default):
+    """Only ever emit a word from our own fixed set.
+
+    These props are read straight off the options dict, which reaches here
+    already validated — so today `style` cannot be anything but a style
+    name. Clamping anyway makes the privacy promise structural instead of a
+    consequence of call order: a future path that reaches a renderer without
+    validating still cannot turn an operator's text into an analytics prop.
+    """
+    return value if value in allowed else default
+
+
+def _timer_props(options):
     n = len(options.get("backgrounds") or [])
-    return {"bg": "none" if n == 0 else ("one" if n == 1 else "many")}
+    return {"mode": _one_of(options.get("mode"),
+                            ("countdown", "clock"), "countdown"),
+            "style": _one_of(options.get("style"), TIMER_STYLES, "classic"),
+            "bg": "none" if n == 0 else ("one" if n == 1 else "many")}
 
 
-jobs = JobManager({"timer": _counted("timer", render_timer, _timer_bg_prop),
-                   "spinner": _counted("spinner", render_spinner),
+def _spinner_props(options):
+    return {"mode": _one_of(options.get("mode"), SPINNER_MODES, "random")}
+
+
+def _motionbg_props(options):
+    return {"style": _one_of(options.get("style"),
+                             MOTIONBG_STYLES, "aurora")}
+
+
+jobs = JobManager({"timer": _counted("timer", render_timer, _timer_props),
+                   "spinner": _counted("spinner", render_spinner,
+                                       _spinner_props),
                    "qr": _counted("qr", render_qr),
-                   "motionbg": _counted("motionbg", render_motion_bg)},
+                   "motionbg": _counted("motionbg", render_motion_bg,
+                                        _motionbg_props)},
                   on_error=lambda tool, exc:
                       stats.report_error("render_failed", exc, tool=tool))
 
@@ -682,8 +739,9 @@ def api_qr_image():
         clean = validate_qr_options(options)
     except ValidationError as exc:
         return jsonify({"error": str(exc)}), 400
+    started = time.time()
     filename = render_qr_image(clean)
-    stats.track("export", tool="qr_png")
+    track_export("qr_png", started)
     return jsonify({"filename": filename})
 
 
@@ -1025,11 +1083,12 @@ def api_board_export(board_id):
         return jsonify({"error": str(exc)}), 400
     except BoardError as exc:
         return jsonify({"error": str(exc)}), 404
+    started = time.time()
     try:
         filename = export_board(board)
     except BoardError as exc:
         return jsonify({"error": str(exc)}), 400
-    stats.track("export", tool="scoreboard")
+    track_export("scoreboard", started)
     return jsonify({"filename": filename})
 
 
