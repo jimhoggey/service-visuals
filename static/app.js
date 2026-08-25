@@ -264,6 +264,259 @@
 
   // ============================================================ TIMER ======
 
+  // ---- background images (spec: docs/specs/timer-backgrounds.md) ----------
+  // `ids` is the ordered set attached to THIS timer (0-10 items, upload/add
+  // order). `library` is the full store the picker lists — re-fetched every
+  // time the picker opens (see openTimerBgPicker) and otherwise kept in sync
+  // in-place as images are added/deleted through this same panel.
+  var timerBg = { ids: [], library: null };
+
+  // Preview Image objects, cached by id so a redraw triggered by an
+  // unrelated keystroke (dim slider, warn checkbox, ...) never re-fetches
+  // or re-decodes an image that is already on screen — without this cache
+  // the canvas would flash back to the plain background on every redraw
+  // while the fetch is in flight.
+  var bgImageCache = {};
+
+  function getTimerBgImage(id) {
+    var entry = bgImageCache[id];
+    if (entry) return entry;
+    entry = { img: new Image(), loaded: false };
+    entry.img.onload = function () {
+      entry.loaded = true;
+      drawTimerPreview();
+    };
+    entry.img.src = "/api/backgrounds/" + encodeURIComponent(id);
+    bgImageCache[id] = entry;
+    return entry;
+  }
+
+  // Cover-fit (scale to fill, crop the overflow, centred — never letterbox,
+  // never distort), then blur, then dim, in that order: mirrors
+  // prepare_background() in render/timer.py exactly, at preview scale.
+  // ctx.filter "blur(9px)" is HALF the renderer's 18px radius because this
+  // canvas is half the 1920x1080 export (PW/PH below).
+  function drawTimerBgPlate(ctx, img, blur, dimPct) {
+    ctx.save();
+    if (blur) ctx.filter = "blur(9px)";
+    var scale = Math.max(PW / img.naturalWidth, PH / img.naturalHeight);
+    var dw = img.naturalWidth * scale;
+    var dh = img.naturalHeight * scale;
+    ctx.drawImage(img, (PW - dw) / 2, (PH - dh) / 2, dw, dh);
+    ctx.restore();   // clear the blur filter before dimming — blurring the
+                      // dim overlay itself would wash the darkening out.
+
+    ctx.save();
+    ctx.fillStyle = "#000000";
+    ctx.globalAlpha = Math.max(0, Math.min(80, dimPct)) / 100;
+    ctx.fillRect(0, 0, PW, PH);
+    ctx.restore();
+  }
+
+  // With no images this is exactly paintBackground(), so the empty-set
+  // preview never changes. With one, draw the first image (only the first —
+  // the preview always shows the opening frame, cycling is video-only).
+  function drawTimerBackground(ctx, t) {
+    if (!t.backgrounds.length) { paintBackground(ctx); return; }
+    var entry = getTimerBgImage(t.backgrounds[0]);
+    if (!entry.loaded) { paintBackground(ctx); return; }
+    drawTimerBgPlate(ctx, entry.img, t.bgBlur, t.bgDim);
+  }
+
+  function renderTimerBgStrip() {
+    var strip = $("timer-bg-strip");
+    while (strip.firstChild) strip.removeChild(strip.firstChild);
+    timerBg.ids.forEach(function (id, idx) {
+      var li = document.createElement("li");
+      li.className = "bg-thumb";
+      var img = document.createElement("img");
+      img.src = "/api/backgrounds/" + encodeURIComponent(id);
+      img.alt = "";
+      var x = document.createElement("button");
+      x.type = "button";
+      x.className = "bg-thumb-x";
+      x.setAttribute("aria-label", "Remove image " + (idx + 1) + " from this timer");
+      x.textContent = "×";
+      x.addEventListener("click", function () { removeTimerBg(id); });
+      li.appendChild(img);
+      li.appendChild(x);
+      strip.appendChild(li);
+    });
+    $("timer-bg-empty").hidden = timerBg.ids.length > 0;
+    var atCap = timerBg.ids.length >= 10;
+    $("timer-bg-add").disabled = atCap;
+    $("timer-bg-add").title = atCap
+      ? "A timer can use up to 10 background images." : "";
+  }
+
+  function addTimerBg(id) {
+    if (timerBg.ids.length >= 10) return;
+    if (timerBg.ids.indexOf(id) !== -1) return;   // already in this set
+    timerBg.ids.push(id);
+    renderTimerBgStrip();
+    updateTimer();
+  }
+
+  function removeTimerBg(id) {
+    var i = timerBg.ids.indexOf(id);
+    if (i === -1) return;
+    timerBg.ids.splice(i, 1);
+    renderTimerBgStrip();
+    updateTimer();
+  }
+
+  function bgLibRow(entry) {
+    var li = document.createElement("li");
+    li.className = "bg-lib-item";
+
+    var thumb = document.createElement("button");
+    thumb.type = "button";
+    thumb.className = "bg-lib-thumb";
+    thumb.title = "Add to this timer";
+    var img = document.createElement("img");
+    img.src = "/api/backgrounds/" + encodeURIComponent(entry.id);
+    img.alt = "";
+    thumb.appendChild(img);
+    thumb.addEventListener("click", function () { addTimerBg(entry.id); });
+
+    var del = document.createElement("button");
+    del.type = "button";
+    del.className = "bg-lib-del";
+    del.setAttribute("aria-label", "Delete this stored image");
+    del.title = "Delete from storage";
+    del.textContent = "×";
+    del.addEventListener("click", function (e) {
+      e.stopPropagation();
+      deleteTimerBgLib(entry.id);
+    });
+
+    li.appendChild(thumb);
+    li.appendChild(del);
+    return li;
+  }
+
+  function renderTimerBgLib() {
+    var list = $("timer-bg-lib-list");
+    while (list.firstChild) list.removeChild(list.firstChild);
+    var images = (timerBg.library || []);
+    images.forEach(function (entry) { list.appendChild(bgLibRow(entry)); });
+    $("timer-bg-lib-empty").hidden = images.length > 0;
+  }
+
+  function refreshTimerBgLibrary() {
+    return fetch("/api/backgrounds", { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : { images: [] }; })
+      .then(function (j) {
+        timerBg.library = (j && j.images) || [];
+        renderTimerBgLib();
+      })
+      .catch(function () {
+        timerBg.library = timerBg.library || [];
+        renderTimerBgLib();
+      });
+  }
+
+  function openTimerBgPicker() {
+    $("timer-bg-picker").hidden = false;
+    $("timer-bg-add").setAttribute("aria-expanded", "true");
+    // Re-fetch every time the panel opens (it's one small JSON GET) rather
+    // than trusting a cache that could have gone stale while this view sat
+    // unopened — an empty array is still truthy, so "already fetched once"
+    // is not the same question as "still correct".
+    refreshTimerBgLibrary();
+  }
+
+  function closeTimerBgPicker() {
+    $("timer-bg-picker").hidden = true;
+    $("timer-bg-add").setAttribute("aria-expanded", "false");
+  }
+
+  function uploadTimerBg(file) {
+    $("timer-bg-upload-status").textContent = "Uploading…";
+    var fd = new FormData();
+    fd.append("image", file);
+    fetch("/api/backgrounds", { method: "POST", body: fd })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        $("timer-bg-upload").value = "";
+        if (!res.ok || !(res.j && res.j.id)) {
+          $("timer-bg-upload-status").textContent = "";
+          showError("timer", (res.j && res.j.error) || "Could not use that image.");
+          return;
+        }
+        hideError("timer");
+        $("timer-bg-upload-status").textContent = "";
+        var id = res.j.id;
+        timerBg.library = [{ id: id, added: Date.now() / 1000 }]
+          .concat(timerBg.library || []);
+        renderTimerBgLib();
+        // The natural read of "upload a new one": use it on this timer now.
+        addTimerBg(id);
+      })
+      .catch(function () {
+        $("timer-bg-upload").value = "";
+        $("timer-bg-upload-status").textContent = "";
+        showError("timer", "Could not upload the image — is the server running?");
+      });
+  }
+
+  function deleteTimerBgLib(id) {
+    if (!window.confirm("Delete this stored background image? It will no " +
+      "longer appear in the picker for any timer.")) return;
+    fetch("/api/backgrounds/" + encodeURIComponent(id), { method: "DELETE" })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          if (!r.ok) {
+            var e = new Error("reject");
+            e.userMessage = (j && j.error) || "Could not delete that image.";
+            throw e;
+          }
+        });
+      })
+      .then(function () {
+        hideError("timer");
+        timerBg.library = (timerBg.library || []).filter(
+          function (im) { return im.id !== id; });
+        renderTimerBgLib();
+        // The file is gone from storage — keep it out of the current set
+        // too, or export would fail with "missing" once submitted.
+        removeTimerBg(id);
+      })
+      .catch(function (err) {
+        showError("timer", (err && err.userMessage) || "Could not delete that image.");
+      });
+  }
+
+  // Only shown with 2+ images (spec table) — a single image never cycles,
+  // so there is nothing for "seconds per image" to mean.
+  function applyTimerBg() {
+    var multi = timerBg.ids.length >= 2;
+    $("timer-bg-seconds-field").hidden = !multi;
+    $("timer-bg-seconds-hint").hidden = !multi;
+    $("timer-bg-dim-value").textContent = $("timer-bg-dim").value + "%";
+  }
+
+  function validateTimerBg() {
+    // Mirrors _int_field's generic message template in app.py for both
+    // fields — neither has a custom override there (spec: "bg_seconds:
+    // _int_field ... label 'Seconds per image'", "bg_dim: _int_field ...
+    // label 'Dim'").
+    if (timerBg.ids.length > 10) {
+      return "A timer can use up to 10 background images.";
+    }
+    if (timerBg.ids.length >= 2) {
+      var secs = intFrom($("timer-bg-seconds"));
+      if (secs === null || secs < 2 || secs > 120) {
+        return "Seconds per image must be a whole number between 2 and 120.";
+      }
+    }
+    var dim = intFrom($("timer-bg-dim"));
+    if (dim === null || dim < 0 || dim > 80) {
+      return "Dim must be a whole number between 0 and 80.";
+    }
+    return null;
+  }
+
   // mode is "countdown" (default, untouched behaviour) or "clock" — a wall
   // clock that starts at a chosen time and ticks forward in real time.
   function readTimer() {
@@ -285,7 +538,15 @@
       clockFormat: formatEl ? formatEl.value : "12h",
       showSeconds: $("timer-clock-show-seconds").checked,
       // Addendum (v1.23.0): one checkbox, one id, used by both modes.
-      showMillis: $("timer-show-millis").checked
+      showMillis: $("timer-show-millis").checked,
+      // Backgrounds (spec: docs/specs/timer-backgrounds.md): valid in both
+      // modes. `backgrounds` comes from JS state (timerBg.ids), not a DOM
+      // field — the strip is built dynamically, there is no single input
+      // that holds the set.
+      backgrounds: timerBg.ids.slice(),
+      bgSeconds: toInt($("timer-bg-seconds").value, 10),
+      bgDim: toInt($("timer-bg-dim").value, 45),
+      bgBlur: $("timer-bg-blur").checked
     };
   }
 
@@ -306,7 +567,7 @@
 
   function validateTimerHold() {
     var hold = intFrom($("timer-hold"));
-    if (hold === null || hold < 0 || hold > 30) return "Hold at 0:00 must be 0 to 30 seconds.";
+    if (hold === null || hold < 0 || hold > 30) return '"Keep 0:00 on screen" must be 0 to 30 seconds.';
     return null;
   }
 
@@ -333,6 +594,10 @@
 
   function validateTimer() {
     var t = readTimer();
+    // Backgrounds are valid in BOTH modes (spec), so this check runs before
+    // the mode branch rather than being duplicated in each arm.
+    var bgErr = validateTimerBg();
+    if (bgErr) return bgErr;
     if (t.mode === "clock") return validateTimerClockStart() || validateTimerClockLength();
     return validateTimerDuration() || validateTimerHold();
   }
@@ -375,17 +640,31 @@
     return w;
   }
 
-  function drawClock(ctx, text, cx, cy, met, color) {
+  // Digit shadow (spec: docs/specs/timer-backgrounds.md addendum) — mirrors
+  // render/timer.py's _paste_digits: a dark halo behind the digits so they
+  // stay readable over a busy, bright background image. `hasBg` is only
+  // true when a real image is in use (never the plain vignette), so the
+  // no-background preview never grows a shadow. shadowBlur 9 is HALF the
+  // renderer's 18px radius because this canvas is half the 1920x1080
+  // export, same halving rule as drawTimerBgPlate's blur(9px) above.
+  // Reset to 0 straight after so nothing drawn afterwards (the ring/bar
+  // track, etc.) inherits it.
+  function drawClock(ctx, text, cx, cy, met, color, hasBg) {
     ctx.font = "700 " + met.px + "px " + FONT_DIGITS;
     ctx.fillStyle = color;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
+    if (hasBg) {
+      ctx.shadowColor = "rgba(0, 0, 0, 0.7)";
+      ctx.shadowBlur = 9;
+    }
     var x = cx - clockWidth(text, met) / 2;
     text.split("").forEach(function (ch) {
       var w = slotWidth(ch, met);
       ctx.fillText(ch, x + w / 2, cy);
       x += w;
     });
+    if (hasBg) ctx.shadowBlur = 0;
   }
 
   // ---- clock-mode display rules (spec: docs/specs/clock-mode.md) ----------
@@ -457,7 +736,7 @@
   // gap after the last digit) as a single centred line. Can't reuse
   // drawClock() directly — that draws one string at one uniform size — but
   // reuses its digitMetrics()/clockWidth() geometry throughout.
-  function drawClockComposite(ctx, base, millis, tag, cx, cy, px, color, accent) {
+  function drawClockComposite(ctx, base, millis, tag, cx, cy, px, color, accent, hasBg) {
     var totalW = clockCompositeWidth(ctx, base, millis, tag, px);
     var met = digitMetrics(ctx, px);
     var x = cx - totalW / 2;
@@ -465,6 +744,15 @@
     ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
     var baseY = cy + px * 0.34;   // digits' shared baseline, centred overall
+
+    // Digit shadow (spec: docs/specs/timer-backgrounds.md addendum) — see
+    // drawClock() above for the full rationale. Covers all three runs
+    // (main/millis/tag) since together they are one "digit block" on the
+    // renderer side; reset once at the end, after the tag is drawn.
+    if (hasBg) {
+      ctx.shadowColor = "rgba(0, 0, 0, 0.7)";
+      ctx.shadowBlur = 9;
+    }
 
     ctx.font = "700 " + px + "px " + FONT_DIGITS;
     ctx.fillStyle = color;
@@ -493,6 +781,8 @@
       ctx.fillStyle = accent;
       ctx.fillText(tag, x + tw / 2, baseY);
     }
+
+    if (hasBg) ctx.shadowBlur = 0;
   }
 
   // Clock mode's preview: always the FIRST frame (elapsed = 0), so seconds
@@ -525,22 +815,24 @@
       // RING_INNER_FIT / RING_DIGITS_MAX in render/timer.py.
       var rw = clockCompositeWidth(ctx, f.base, f.millis, f.tag, 100);
       var rpx = rw > 0 ? Math.max(30, Math.min(95, Math.round(100 * 351 / rw))) : 95;
-      drawClockComposite(ctx, f.base, f.millis, f.tag, PW / 2, PH / 2, rpx, TEXT_LIGHT, t.accent);
+      drawClockComposite(ctx, f.base, f.millis, f.tag, PW / 2, PH / 2, rpx, TEXT_LIGHT, t.accent, t.backgrounds.length > 0);
     } else {
       // classic: auto-size the FULL string (incl. millis + tag) to fit
       // 1600px at full res (800 here), capped at 400 (200 here).
       var w = clockCompositeWidth(ctx, f.base, f.millis, f.tag, 100);
       var px = w > 0 ? Math.max(30, Math.min(200, Math.round(100 * 800 / w))) : 200;
-      drawClockComposite(ctx, f.base, f.millis, f.tag, PW / 2, PH / 2, px, TEXT_LIGHT, t.accent);
+      drawClockComposite(ctx, f.base, f.millis, f.tag, PW / 2, PH / 2, px, TEXT_LIGHT, t.accent, t.backgrounds.length > 0);
     }
   }
 
   function drawTimerPreview() {
     var canvas = $("timer-canvas");
     var ctx = canvas.getContext("2d");
-    paintBackground(ctx);
-
     var t = readTimer();
+    // Empty set -> paintBackground(), unchanged from before this feature.
+    // The style's track + digits are painted on top either way (spec).
+    drawTimerBackground(ctx, t);
+
     if (t.mode === "clock") { drawClockTimerPreview(ctx, t); return; }
 
     var total = Math.max(0, t.minutes * 60 + t.seconds);
@@ -571,9 +863,9 @@
         // untouched: same fixed 95px drawClock() call as always.
         var rw = clockCompositeWidth(ctx, text, millis, "", 100);
         var rpx = rw > 0 ? Math.max(30, Math.min(95, Math.round(100 * 351 / rw))) : 95;
-        drawClockComposite(ctx, text, millis, "", PW / 2, PH / 2, rpx, digitColor, t.accent);
+        drawClockComposite(ctx, text, millis, "", PW / 2, PH / 2, rpx, digitColor, t.accent, t.backgrounds.length > 0);
       } else {
-        drawClock(ctx, text, PW / 2, PH / 2, digitMetrics(ctx, 95), digitColor);
+        drawClock(ctx, text, PW / 2, PH / 2, digitMetrics(ctx, 95), digitColor, t.backgrounds.length > 0);
       }
     } else if (t.style === "bar") {
       // render: margin 140, top 944, height 16, digits 330px centred at y=500
@@ -582,9 +874,9 @@
         // (1640/2=820, 330/2=165). Without millis: unchanged fixed 165px.
         var bw = clockCompositeWidth(ctx, text, millis, "", 100);
         var bpx = bw > 0 ? Math.max(30, Math.min(165, Math.round(100 * 820 / bw))) : 165;
-        drawClockComposite(ctx, text, millis, "", PW / 2, 250, bpx, digitColor, t.accent);
+        drawClockComposite(ctx, text, millis, "", PW / 2, 250, bpx, digitColor, t.accent, t.backgrounds.length > 0);
       } else {
-        drawClock(ctx, text, PW / 2, 250, digitMetrics(ctx, 165), digitColor);
+        drawClock(ctx, text, PW / 2, 250, digitMetrics(ctx, 165), digitColor, t.backgrounds.length > 0);
       }
       roundRectPath(ctx, 70, 472, PW - 140, 8, 4);
       ctx.fillStyle = TRACK;
@@ -598,13 +890,13 @@
       // as _clock_font_size(show_millis=True, has_tag=False) in timer.py.
       var w = clockCompositeWidth(ctx, text, millis, "", 100);
       var px = w > 0 ? Math.max(30, Math.min(200, Math.round(100 * 800 / w))) : 200;
-      drawClockComposite(ctx, text, millis, "", PW / 2, PH / 2, px, digitColor, t.accent);
+      drawClockComposite(ctx, text, millis, "", PW / 2, PH / 2, px, digitColor, t.accent, t.backgrounds.length > 0);
     } else {
       // classic: auto-size to fit 1600px at 2x (800 here), capped at 200
       var ref = digitMetrics(ctx, 100);
       var w2 = clockWidth(text, ref);
       var px2 = w2 > 0 ? Math.max(30, Math.min(200, Math.round(100 * 800 / w2))) : 200;
-      drawClock(ctx, text, PW / 2, PH / 2, digitMetrics(ctx, px2), digitColor);
+      drawClock(ctx, text, PW / 2, PH / 2, digitMetrics(ctx, px2), digitColor, t.backgrounds.length > 0);
     }
   }
 
@@ -670,13 +962,20 @@
 
   function updateTimer() {
     var mode = applyTimerMode();
+    // Backgrounds group is visible (and validated) in BOTH modes, so this
+    // runs unconditionally rather than inside either branch below.
+    applyTimerBg();
     var t = readTimer();
+    var bgErr = validateTimerBg();
+    var bgHint = $("timer-bg-seconds-hint");
+    bgHint.textContent = bgErr || "Each image holds this long, then the next one shows.";
+    bgHint.classList.toggle("is-bad", !!bgErr);
     var err;
 
     if (mode === "clock") {
       var startErr = validateTimerClockStart();
       var lengthErr = validateTimerClockLength();
-      err = startErr || lengthErr;
+      err = startErr || lengthErr || bgErr;
       var startHint = $("timer-clock-start-hint");
       startHint.textContent = startErr || ("Shows as " + timerClockStartLabel(t));
       startHint.classList.toggle("is-bad", !!startErr);
@@ -686,12 +985,13 @@
     } else {
       var durationErr = validateTimerDuration();
       var holdErr = validateTimerHold();
-      err = durationErr || holdErr;
+      err = durationErr || holdErr || bgErr;
       var hint = $("timer-duration-hint");
       hint.textContent = durationErr || ($("timer-show-millis").checked ? "5 seconds to 30 minutes with milliseconds" : "5 seconds to 120 minutes");
       hint.classList.toggle("is-bad", !!durationErr);
       var holdHint = $("timer-hold-hint");
-      holdHint.textContent = holdErr || "0 to 30 seconds";
+      holdHint.textContent = holdErr ||
+        "After the countdown ends the video stays on 0:00 this long. 0 to 30 seconds.";
       holdHint.classList.toggle("is-bad", !!holdErr);
       $("timer-hold").setAttribute("aria-invalid", holdErr ? "true" : "false");
     }
@@ -718,7 +1018,13 @@
           show_seconds: t.showSeconds,
           show_millis: t.showMillis,
           style: t.style,
-          accent: t.accent
+          accent: t.accent,
+          // Backgrounds (spec: docs/specs/timer-backgrounds.md): all four
+          // keys are valid in both modes.
+          backgrounds: t.backgrounds,
+          bg_seconds: t.bgSeconds,
+          bg_dim: t.bgDim,
+          bg_blur: t.bgBlur
         }
       };
     }
@@ -733,7 +1039,12 @@
         hold_seconds: t.hold,
         // Addendum (v1.23.0): accepted (and defaults false) in countdown
         // payloads too now — see _validate_countdown_options in app.py.
-        show_millis: t.showMillis
+        show_millis: t.showMillis,
+        // Backgrounds (spec: docs/specs/timer-backgrounds.md).
+        backgrounds: t.backgrounds,
+        bg_seconds: t.bgSeconds,
+        bg_dim: t.bgDim,
+        bg_blur: t.bgBlur
       }
     };
   }
@@ -2502,6 +2813,18 @@
       });
     }
   );
+  // Background images: "+ ADD IMAGE" opens a small inline picker (not a
+  // modal) rather than a native file dialog directly, because it also
+  // offers the already-stored library to reuse (spec).
+  $("timer-bg-add").addEventListener("click", function () {
+    if ($("timer-bg-picker").hidden) openTimerBgPicker();
+    else closeTimerBgPicker();
+  });
+  $("timer-bg-picker-close").addEventListener("click", closeTimerBgPicker);
+  $("timer-bg-upload").addEventListener("change", function () {
+    var file = this.files && this.files[0];
+    if (file) uploadTimerBg(file);
+  });
   $("timer-form").addEventListener("submit", function (e) {
     e.preventDefault();
     var err = validateTimer();

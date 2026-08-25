@@ -295,6 +295,50 @@
             </div>
           </fieldset>
 
+          <fieldset class="group" id="timer-bg-group">
+            <legend>Background</legend>
+
+            <div class="bg-strip-wrap">
+              <ul class="bg-strip" id="timer-bg-strip"></ul>
+              <p class="hint bg-strip-empty" id="timer-bg-empty">No images &#8212; plain dark background.</p>
+              <button type="button" class="btn btn-file" id="timer-bg-add" aria-haspopup="true" aria-expanded="false">+ ADD IMAGE</button>
+            </div>
+
+            <div class="panel bg-picker" id="timer-bg-picker" hidden>
+              <div class="bg-row">
+                <label class="btn btn-file" for="timer-bg-upload">UPLOAD NEW&#8230;</label>
+                <input class="vh" type="file" id="timer-bg-upload" accept="image/png,image/jpeg,image/webp">
+                <span class="bg-name" id="timer-bg-upload-status"></span>
+              </div>
+              <ul class="bg-lib-list" id="timer-bg-lib-list"></ul>
+              <p class="hint" id="timer-bg-lib-empty" hidden>No stored images yet &#8212; upload one above.</p>
+              <div class="bg-picker-foot">
+                <button type="button" class="btn" id="timer-bg-picker-close">DONE</button>
+              </div>
+            </div>
+
+            <div class="num-field num-field-wide" id="timer-bg-seconds-field" hidden>
+              <label for="timer-bg-seconds">SECONDS PER IMAGE</label>
+              <input type="number" id="timer-bg-seconds" inputmode="numeric" min="2" max="120" step="1" value="10">
+            </div>
+            <p class="hint" id="timer-bg-seconds-hint" hidden>Each image holds this long, then the next one shows.</p>
+
+            <div class="range-field">
+              <label for="timer-bg-dim">DIM</label>
+              <div class="range-row">
+                <input type="range" id="timer-bg-dim" min="0" max="80" step="1" value="45">
+                <span class="range-value" id="timer-bg-dim-value">45%</span>
+              </div>
+            </div>
+            <p class="hint">Darkens the image so the numbers stay readable.</p>
+
+            <div class="check-row">
+              <input type="checkbox" id="timer-bg-blur">
+              <label for="timer-bg-blur">Blur</label>
+            </div>
+            <p class="hint">Softens a busy photo.</p>
+          </fieldset>
+
           <fieldset class="group" id="timer-options-group">
             <legend>Options</legend>
             <div class="check-row">
@@ -302,10 +346,10 @@
               <label for="timer-warn">Warn colour in final 10 seconds</label>
             </div>
             <div class="num-field num-field-wide">
-              <label for="timer-hold">HOLD AT 0:00 (SECONDS)</label>
+              <label for="timer-hold">KEEP 0:00 ON SCREEN FOR (SECONDS)</label>
               <input type="number" id="timer-hold" inputmode="numeric" min="0" max="30" step="1" value="5">
             </div>
-            <p class="hint" id="timer-hold-hint">0 to 30 seconds</p>
+            <p class="hint" id="timer-hold-hint">After the countdown ends the video stays on 0:00 this long. 0 to 30 seconds.</p>
           </fieldset>
 
           <button class="btn-export" id="timer-export" type="submit">EXPORT MP4</button>

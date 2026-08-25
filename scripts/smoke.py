@@ -107,6 +107,152 @@ def verify(name, filename, expected_duration):
           "got {0!r}".format(dur))
 
 
+def check_prepare_background():
+    """render.timer.prepare_background: cover-fit, dim, blur — exercised as
+    a pure image function (docs/specs/timer-backgrounds.md), no video
+    involved. Cover-fit is checked with a KNOWN edge pixel rather than a
+    pixel diff: a tall (100x400) and a wide (400x100) source each get a
+    hard colour split at their midpoint, and the crop this produces is
+    centred close enough to that midpoint that the pixel right at each
+    edge of the finished 1920x1080 frame still reads as one clean colour
+    (not a LANCZOS-blended one) — proving the crop is centred and the
+    image was scaled, not stretched, in each direction.
+    """
+    import tempfile as _tempfile
+
+    from PIL import Image, ImageDraw
+
+    from render.timer import prepare_background
+
+    print("Timer: prepare_background (cover-fit / dim / blur)")
+    tmp = _tempfile.mkdtemp(prefix="sv-smoke-prepbg-")
+    try:
+        # Tall source: top half red, bottom half blue, split at row 200 of
+        # 400 — cover-fit scales it to fill 1920 WIDE (the binding axis for
+        # a portrait source against a landscape target) and crops the
+        # overflowing height around that same midpoint.
+        tall_path = os.path.join(tmp, "tall.png")
+        tall = Image.new("RGB", (100, 400), (220, 20, 20))
+        ImageDraw.Draw(tall).rectangle([0, 200, 100, 400], fill=(20, 20, 220))
+        tall.save(tall_path)
+        out = prepare_background(tall_path, 0, False)
+        check("tall source cover-fits to exactly 1920x1080",
+              out.size == (1920, 1080), "got {0!r}".format(out.size))
+        top = out.getpixel((0, 0))
+        bottom = out.getpixel((0, 1079))
+        check("tall source: top edge is the top half's colour (red)",
+              top[0] > 150 and top[2] < 100, "got {0!r}".format(top))
+        check("tall source: bottom edge is the bottom half's colour (blue)",
+              bottom[2] > 150 and bottom[0] < 100, "got {0!r}".format(bottom))
+
+        # Wide source: left half green, right half yellow, split at column
+        # 200 of 400 — the mirror case, binding on height this time.
+        wide_path = os.path.join(tmp, "wide.png")
+        wide = Image.new("RGB", (400, 100), (20, 200, 20))
+        ImageDraw.Draw(wide).rectangle([200, 0, 400, 100], fill=(220, 220, 20))
+        wide.save(wide_path)
+        out = prepare_background(wide_path, 0, False)
+        check("wide source cover-fits to exactly 1920x1080",
+              out.size == (1920, 1080), "got {0!r}".format(out.size))
+        left = out.getpixel((0, 0))
+        right = out.getpixel((1919, 0))
+        check("wide source: left edge is the left half's colour (green)",
+              left[1] > 150 and left[0] < 100, "got {0!r}".format(left))
+        check("wide source: right edge is the right half's colour (yellow)",
+              right[0] > 150 and right[1] > 150 and right[2] < 100,
+              "got {0!r}".format(right))
+
+        # Dim: a solid white source blended toward black by dim/100 —
+        # exact arithmetic, not just "got darker".
+        white_path = os.path.join(tmp, "white.png")
+        Image.new("RGB", (300, 300), (255, 255, 255)).save(white_path)
+        out = prepare_background(white_path, 50, False)
+        px = out.getpixel((960, 540))
+        check("dim=50 blends a white image to ~mid-grey",
+              all(abs(c - 128) <= 2 for c in px), "got {0!r}".format(px))
+        out = prepare_background(white_path, 0, False)
+        px = out.getpixel((960, 540))
+        check("dim=0 leaves the image unchanged",
+              px == (255, 255, 255), "got {0!r}".format(px))
+
+        # Blur: an already-1920x1080 source (cover-fit is a no-op here, so
+        # this isolates blur) with a hard vertical edge at the centre.
+        edge_path = os.path.join(tmp, "edge.png")
+        edge = Image.new("RGB", (1920, 1080), (0, 0, 0))
+        ImageDraw.Draw(edge).rectangle([960, 0, 1920, 1080],
+                                       fill=(255, 255, 255))
+        edge.save(edge_path)
+        out = prepare_background(edge_path, 0, True)
+        far_black = out.getpixel((100, 540))
+        far_white = out.getpixel((1820, 540))
+        at_edge = out.getpixel((960, 540))[0]
+        check("blur leaves pixels far from the edge alone (black side)",
+              far_black[0] < 10, "got {0!r}".format(far_black))
+        check("blur leaves pixels far from the edge alone (white side)",
+              far_white[0] > 245, "got {0!r}".format(far_white))
+        check("blur visibly softens the hard edge at the seam",
+              10 < at_edge < 245, "got {0!r}".format(at_edge))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def check_digit_shadow():
+    """render.timer._paste_digits: the soft dark halo dropped behind the
+    digit block ONLY when a real background image is in use (docs/specs/
+    timer-backgrounds.md addendum — a bright, busy photo can swamp light
+    digits even dimmed/blurred, worst in the ring style; raising the
+    default dim would just make every image muddy). Pure image-level
+    check, no video: paste a solid glyph-shaped RGBA block (the same
+    shape _render_digits/_render_clock_block produce — opaque glyph,
+    transparent padding) onto a bright base and confirm a point just
+    outside the glyph itself, but within the halo's reach, comes out
+    measurably darker with has_bg=True than with has_bg=False — and that
+    a point far away is untouched either way, proving this is a local
+    soft shadow, not a global dim.
+    """
+    from PIL import Image
+
+    from render.timer import _paste_digits
+
+    print("Timer: digit shadow (_paste_digits)")
+
+    def make_block():
+        block = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+        glyph = Image.new("RGBA", (80, 80), (240, 240, 235, 255))
+        block.paste(glyph, (60, 60))
+        return block
+
+    x, y = 400, 400
+    bright = (230, 220, 210)   # stand-in for a bright, busy photo
+
+    base_off = Image.new("RGB", (1920, 1080), bright)
+    _paste_digits(base_off, make_block(), x, y, False)
+
+    base_on = Image.new("RGB", (1920, 1080), bright)
+    _paste_digits(base_on, make_block(), x, y, True)
+
+    # 15px left of the glyph's own left edge (glyph occupies x+60..x+140 /
+    # y+60..y+140 within base) — outside the glyph, well inside the
+    # halo's spread (pad 60px, blur radius 18px).
+    near = (x + 45, y + 100)
+    off_near = base_off.getpixel(near)
+    on_near = base_on.getpixel(near)
+    check("no background: pixel beside the glyph is untouched",
+          off_near == bright, "got {0!r}".format(off_near))
+    check("with background: halo visibly darkens the pixel beside the glyph",
+          sum(on_near) < sum(off_near) - 60,
+          "off={0!r} on={1!r}".format(off_near, on_near))
+
+    # Far outside the halo's reach entirely — must read as the untouched
+    # base colour in both cases.
+    far = (x - 300, y)
+    off_far = base_off.getpixel(far)
+    on_far = base_on.getpixel(far)
+    check("with background: pixel far from the glyph is untouched",
+          on_far == bright and off_far == bright,
+          "off={0!r} on={1!r}".format(off_far, on_far))
+
+
 def check_clock_format():
     """format_clock_time: the pure display contract clock mode and the JS
     preview must both match exactly (docs/specs/clock-mode.md). Exercised
@@ -190,9 +336,14 @@ def check_clock_validation():
     # its presence (always false here, since `countdown` never sets it)
     # proves an old caller that never heard of millis still gets the exact
     # dict shape it always got, plus the new default key.
+    # Addendum (v1.24.0): the four Background-group keys, defaulting to "no
+    # images" (docs/specs/timer-backgrounds.md) — same idea, a caller that
+    # never heard of backgrounds still gets those defaults for free.
     expected = {"minutes": 1, "seconds": 0, "style": "ring",
                 "accent": "#e8b44f", "warn_last10": False,
-                "hold_seconds": 3, "show_millis": False}
+                "hold_seconds": 3, "show_millis": False,
+                "backgrounds": [], "bg_seconds": 10, "bg_dim": 45,
+                "bg_blur": False}
     clean = app.validate_timer_options(countdown)
     check("a countdown payload (mode absent) validates unchanged",
           clean == expected, "got {0!r}".format(clean))
@@ -230,6 +381,34 @@ def check_clock_validation():
     expect_error("show_millis must be a boolean in countdown mode",
                  dict(countdown, show_millis="yes"),
                  '"Show milliseconds" must be true or false.')
+
+    # v1.24.0: the four Background-group keys (docs/specs/timer-
+    # backgrounds.md) — valid, and validated identically, in both modes.
+    with_bg = dict(countdown, backgrounds=[], bg_seconds=5, bg_dim=20,
+                   bg_blur=True)
+    clean = app.validate_timer_options(with_bg)
+    check("the four background keys are accepted (countdown mode)",
+          clean.get("backgrounds") == [] and clean.get("bg_seconds") == 5
+          and clean.get("bg_dim") == 20 and clean.get("bg_blur") is True,
+          "got {0!r}".format(clean))
+    clean = app.validate_timer_options(
+        dict(clock, backgrounds=[], bg_seconds=5, bg_dim=20, bg_blur=True))
+    check("the four background keys are accepted (clock mode)",
+          clean.get("bg_seconds") == 5 and clean.get("bg_dim") == 20
+          and clean.get("bg_blur") is True, "got {0!r}".format(clean))
+
+    expect_error("an unknown background id is rejected",
+                 dict(countdown, backgrounds=["deadbeefdeadbeef"]),
+                 "One of the background images is missing")
+    expect_error("more than 10 background images is rejected",
+                 dict(countdown, backgrounds=["a" * 16] * 11),
+                 "up to 10 background images")
+    expect_error("bg_dim above 80 is rejected",
+                 dict(countdown, bg_dim=90),
+                 "Dim must be a whole number between 0 and 80.")
+    expect_error("bg_blur must be a boolean",
+                 dict(countdown, bg_blur="yes"),
+                 "Blur must be true or false.")
 
 
 def check_stats_privacy():
@@ -597,6 +776,30 @@ def main():
             quiet_progress)
         rendered.append(("timer/classic-ms", fn, 8.0))
 
+        # v1.24.0: a countdown cycling two generated background images
+        # (docs/specs/timer-backgrounds.md) — same 6s run + 2s hold shape
+        # as the plain classic check above, just with backgrounds set.
+        # verify() only checks container/codec/duration (it can't see
+        # pixels, and CI has no display), so this proves the cycling path
+        # renders and encodes cleanly, not what it looks like — that is
+        # the orchestrator's frame-extraction job.
+        bg_dir = tempfile.mkdtemp(prefix="sv-smoke-timerbg-")
+        try:
+            from PIL import Image as _Image
+            bg1 = os.path.join(bg_dir, "one.png")
+            bg2 = os.path.join(bg_dir, "two.png")
+            _Image.new("RGB", (200, 200), (200, 30, 30)).save(bg1)
+            _Image.new("RGB", (200, 200), (30, 30, 200)).save(bg2)
+            fn = render_timer(
+                {"minutes": 0, "seconds": 6, "style": "classic",
+                 "accent": "#e8b44f", "warn_last10": True, "hold_seconds": 2,
+                 "backgrounds": [bg1, bg2], "bg_seconds": 2, "bg_dim": 30,
+                 "bg_blur": False},
+                quiet_progress)
+            rendered.append(("timer/two-backgrounds", fn, 8.0))
+        finally:
+            shutil.rmtree(bg_dir, ignore_errors=True)
+
         # Clock mode: classic with millis on (30 fps path), and ring with
         # millis off (10 fps path) — starts chosen to actually cross a
         # rollover (8 PM, then midnight) during the clip, not just sit
@@ -649,6 +852,10 @@ def main():
             if os.path.isfile(path):
                 os.unlink(path)
 
+    print()
+    check_prepare_background()
+    print()
+    check_digit_shadow()
     print()
     check_clock_format()
     print()

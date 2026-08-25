@@ -825,6 +825,138 @@ canvas {
   border-color: var(--line-2);
 }
 
+/* ---- Timer background images (spec: docs/specs/timer-backgrounds.md) ---- */
+
+.bg-strip-wrap {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.bg-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Thumbnails are always exactly 16:9 (the library stores every image
+   cover-fit to 1920x1080 at upload), so a fixed box with object-fit: cover
+   never distorts even before the image itself has loaded. */
+.bg-thumb {
+  position: relative;
+  width: 76px;
+  height: 43px;
+  border-radius: 6px;
+  overflow: visible;
+}
+.bg-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--line-2);
+  object-fit: cover;
+  background: var(--well);
+}
+.bg-thumb-x,
+.bg-lib-del {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: #1b1e23;
+  color: var(--ink-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.bg-thumb-x:hover,
+.bg-lib-del:hover {
+  background: rgba(229, 72, 77, 0.16);
+  border-color: var(--red);
+  color: var(--red-ink);
+}
+
+.bg-strip-empty { margin: 0; }
+
+/* Small inline panel (not a modal) opened by "+ ADD IMAGE" — same treatment
+   as the spinner's .ai-panel. */
+.bg-picker {
+  margin: 4px 0 16px;
+  padding: 14px;
+  background: var(--panel-2);
+}
+.bg-picker .bg-row { margin-bottom: 14px; }
+
+.bg-lib-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.bg-lib-item { position: relative; width: 76px; height: 43px; }
+.bg-lib-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--well);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.12s;
+}
+.bg-lib-thumb:hover { border-color: var(--accent); }
+.bg-lib-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.bg-picker-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+/* ---- DIM slider ---- */
+.range-field label { display: block; margin-bottom: 6px; font-size: 10px; font-weight: 600; letter-spacing: 0.16em; color: var(--ink-faint); }
+.range-row { display: flex; align-items: center; gap: 12px; }
+input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 4px;
+  accent-color: var(--accent);
+  background: var(--well);
+  cursor: pointer;
+}
+.range-value {
+  flex: none;
+  width: 40px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
 /* ---- footer: version + check-for-updates ---- */
 .app-footer {
   display: flex;

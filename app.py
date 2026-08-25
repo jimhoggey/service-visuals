@@ -32,7 +32,7 @@ import stats
 import updater
 from jobs import JobManager
 from render.encoder import EXPORTS_DIR, UPLOADS_DIR
-from render.timer import CLOCK_STYLES, render_timer
+from render.timer import CLOCK_STYLES, cover_fit_image, render_timer
 from render.spinner import render_spinner
 from render.qr import (POSITIONS, render_qr, render_qr_image,
                        render_qr_still)
@@ -66,16 +66,25 @@ def _reject_foreign_hosts():
         return jsonify({"error": "Host not allowed."}), 403
 
 
-def _counted(tool, fn):
+def _counted(tool, fn, extra_props=None):
     """Count an export once it has actually produced a file."""
     def run(options, progress_cb):
         filename = fn(options, progress_cb)
-        stats.track("export", tool=tool)
+        props = extra_props(options) if extra_props else {}
+        stats.track("export", tool=tool, **props)
         return filename
     return run
 
 
-jobs = JobManager({"timer": _counted("timer", render_timer),
+def _timer_bg_prop(options):
+    """How many background images this timer export used — never a
+    filename or a real count, just a coarse bucket (stats.py's privacy
+    rule: props carry no content)."""
+    n = len(options.get("backgrounds") or [])
+    return {"bg": "none" if n == 0 else ("one" if n == 1 else "many")}
+
+
+jobs = JobManager({"timer": _counted("timer", render_timer, _timer_bg_prop),
                    "spinner": _counted("spinner", render_spinner),
                    "qr": _counted("qr", render_qr),
                    "motionbg": _counted("motionbg", render_motion_bg)},
@@ -176,7 +185,7 @@ def _validate_countdown_options(options):
             'The "warn in the last 10 seconds" option must be true or false.')
 
     hold_seconds = _int_field(
-        options, "hold_seconds", 0, 30, 5, "Hold at 00:00")
+        options, "hold_seconds", 0, 30, 5, "Keep 0:00 on screen (seconds)")
 
     # Addendum (v1.23.0): the same millis toggle clock mode uses, now also
     # accepted on a countdown. Same message/shape as the clock branch below.
@@ -191,7 +200,7 @@ def _validate_countdown_options(options):
             "With milliseconds on, the timer can run for at most 30 minutes. "
             "Turn milliseconds off for a longer timer.")
 
-    return {
+    clean = {
         "minutes": minutes,
         "seconds": seconds,
         "style": style,
@@ -200,6 +209,8 @@ def _validate_countdown_options(options):
         "hold_seconds": hold_seconds,
         "show_millis": show_millis,
     }
+    clean.update(_timer_background_options(options))
+    return clean
 
 
 def _clip_length_field(options):
@@ -261,7 +272,7 @@ def _validate_clock_options(options):
     if not isinstance(style, str) or style not in CLOCK_STYLES:
         raise ValidationError("Style must be classic or ring.")
 
-    return {
+    clean = {
         "mode": "clock",
         "start": start,
         "duration_seconds": duration,
@@ -271,6 +282,8 @@ def _validate_clock_options(options):
         "style": style,
         "accent": _accent_field(options),
     }
+    clean.update(_timer_background_options(options))
+    return clean
 
 
 def validate_spinner_options(options):
@@ -355,6 +368,70 @@ def _str_field(options, key, lo, hi, required, label):
 
 
 UPLOAD_NAME_RE = re.compile(r"[A-Za-z0-9._-]+\.(png|jpg|jpeg|webp)")
+
+# Timer background images (docs/specs/timer-backgrounds.md), kept across
+# restarts under ~/.service-visuals like boards and the API key — never
+# inside the app bundle. Honours SERVICE_VISUALS_CONFIG so smoke.py's
+# throwaway config dir isolates this too (same convention as
+# render.scoreboard's BOARDS_DIR).
+BACKGROUNDS_DIR = os.path.join(
+    os.environ.get("SERVICE_VISUALS_CONFIG") or
+    os.path.join(os.path.expanduser("~"), ".service-visuals"),
+    "backgrounds")
+
+# 16 lowercase hex chars, minted by uuid4().hex[:16] — used as a FILENAME
+# (id + ".png"), so it is checked against this before anything touches the
+# filesystem, same discipline as BOARD_ID_RE.
+BACKGROUND_ID_RE = re.compile(r"[a-f0-9]{16}")
+BACKGROUND_LIBRARY_MAX = 40
+BACKGROUNDS_PER_TIMER_MAX = 10
+
+
+def _backgrounds_field(options):
+    """Validate the optional list of background image ids -> a list of
+    absolute file paths inside BACKGROUNDS_DIR, so render_timer never has
+    to think about ids, storage layout or path safety at all.
+    """
+    raw = options.get("backgrounds", [])
+    if not isinstance(raw, list):
+        raise ValidationError(
+            "A timer can use up to {0} background images.".format(
+                BACKGROUNDS_PER_TIMER_MAX))
+    if len(raw) > BACKGROUNDS_PER_TIMER_MAX:
+        raise ValidationError(
+            "A timer can use up to {0} background images.".format(
+                BACKGROUNDS_PER_TIMER_MAX))
+    paths = []
+    for item in raw:
+        if not isinstance(item, str) or not BACKGROUND_ID_RE.fullmatch(item):
+            raise ValidationError(
+                "One of the background images is missing — remove it "
+                "and add it again.")
+        path = os.path.join(BACKGROUNDS_DIR, item + ".png")
+        if not os.path.isfile(path):
+            raise ValidationError(
+                "One of the background images is missing — remove it "
+                "and add it again.")
+        paths.append(path)
+    return paths
+
+
+def _timer_background_options(options):
+    """The four Background-group keys, shared verbatim by countdown and
+    clock validation (docs/specs/timer-backgrounds.md) — both modes offer
+    the same group, so there is exactly one place that can drift.
+    """
+    bg_dim = _int_field(options, "bg_dim", 0, 80, 45, "Dim")
+    bg_blur = options.get("bg_blur", False)
+    if not isinstance(bg_blur, bool):
+        raise ValidationError("Blur must be true or false.")
+    return {
+        "backgrounds": _backgrounds_field(options),
+        "bg_seconds": _int_field(
+            options, "bg_seconds", 2, 120, 10, "Seconds per image"),
+        "bg_dim": bg_dim,
+        "bg_blur": bg_blur,
+    }
 
 
 def _background_field(options):
@@ -630,6 +707,109 @@ def api_upload_bg():
     name = "bg_{0}.png".format(uuid.uuid4().hex[:16])
     img.save(os.path.join(UPLOADS_DIR, name), format="PNG")
     return jsonify({"filename": name})
+
+
+# ---------------------------------------------------------------------------
+# Timer background library (docs/specs/timer-backgrounds.md) — unlike
+# /api/upload-bg's one-shot temp upload above, these images are KEPT under
+# BACKGROUNDS_DIR so a church can reuse the same series artwork for weeks.
+# ---------------------------------------------------------------------------
+
+def _background_id_field(image_id):
+    """Validate an id straight off the URL. Raises ValidationError."""
+    if not isinstance(image_id, str) or not BACKGROUND_ID_RE.fullmatch(image_id):
+        raise ValidationError("That is not a background image we know about.")
+    return image_id
+
+
+def _background_path(image_id):
+    """Resolve a validated id to its file, with the same realpath
+    containment check every other id-addressed route in this file uses
+    (_background_field, /api/board/<id>/source.png)."""
+    root = os.path.realpath(BACKGROUNDS_DIR)
+    path = os.path.realpath(os.path.join(root, image_id + ".png"))
+    if not path.startswith(root + os.sep):
+        return None
+    return path
+
+
+@app.route("/api/backgrounds", methods=["POST"])
+def api_backgrounds_add():
+    """Add one image to the background library: multipart `image` ->
+    {"id": "<16 hex>"}. Re-encoded through Pillow (rejects anything that
+    isn't a real image, same wording as /api/upload-bg) and cover-fit to
+    1920x1080 once here so the renderer never has to re-fit it."""
+    file = request.files.get("image")
+    if file is None or not file.filename:
+        return jsonify({"error": "No image was uploaded."}), 400
+    try:
+        img = Image.open(file.stream)
+        img.load()
+        img = cover_fit_image(img)
+    except Exception:
+        return jsonify({"error": (
+            "That file is not an image we can read (use PNG or JPG).")}), 400
+
+    os.makedirs(BACKGROUNDS_DIR, exist_ok=True)
+    existing = [n for n in os.listdir(BACKGROUNDS_DIR) if n.endswith(".png")]
+    if len(existing) >= BACKGROUND_LIBRARY_MAX:
+        return jsonify({"error": (
+            "You have {0} background images saved — delete some before "
+            "adding more.").format(BACKGROUND_LIBRARY_MAX)}), 400
+
+    image_id = uuid.uuid4().hex[:16]
+    img.save(os.path.join(BACKGROUNDS_DIR, image_id + ".png"), format="PNG")
+    return jsonify({"id": image_id})
+
+
+@app.route("/api/backgrounds", methods=["GET"])
+def api_backgrounds_list():
+    """{"images": [{"id", "added"}]}, newest first."""
+    images = []
+    if os.path.isdir(BACKGROUNDS_DIR):
+        for name in os.listdir(BACKGROUNDS_DIR):
+            if not name.endswith(".png"):
+                continue
+            image_id = name[:-4]
+            if not BACKGROUND_ID_RE.fullmatch(image_id):
+                continue  # not one of ours — never let a stray file in
+            path = os.path.join(BACKGROUNDS_DIR, name)
+            try:
+                added = os.path.getmtime(path)
+            except OSError:
+                continue
+            images.append({"id": image_id, "added": added})
+    images.sort(key=lambda item: item["added"], reverse=True)
+    return jsonify({"images": images})
+
+
+@app.route("/api/backgrounds/<image_id>", methods=["GET"])
+def api_backgrounds_get(image_id):
+    try:
+        _background_id_field(image_id)
+    except ValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    path = _background_path(image_id)
+    if path is None or not os.path.isfile(path):
+        return jsonify({"error": "That background image no longer exists."}
+                       ), 404
+    return send_file(path, mimetype="image/png")
+
+
+@app.route("/api/backgrounds/<image_id>", methods=["DELETE"])
+def api_backgrounds_delete(image_id):
+    """Remove one image from the library. A saved timer that still refers
+    to this id is left alone — the render just errors with the missing-
+    image message the next time it is used, same as a board that outlives
+    a deleted number: nothing here needs to know about saved forms."""
+    try:
+        _background_id_field(image_id)
+    except ValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    path = _background_path(image_id)
+    if path is not None and os.path.isfile(path):
+        os.unlink(path)
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ import re
 import threading
 from collections import OrderedDict
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 from . import fonts
 from .encoder import WIDTH, HEIGHT, encode_parallel, export_path
@@ -116,6 +116,175 @@ def _background():
         edge = Image.new("RGB", (WIDTH, HEIGHT), BG_EDGE)
         _bg_cache = Image.composite(edge, base, mask)
     return _bg_cache
+
+
+# ---- background images (opt-in, v1.24.0) --------------------------------------
+#
+# With no images chosen, render_timer/_render_clock build a single plate from
+# _background() exactly as before this feature existed — see _plates() below.
+# See docs/specs/timer-backgrounds.md for the full contract.
+
+BG_BLUR_RADIUS = 18      # px, at the full 1920x1080 frame (spec: half that,
+                         # 9px, in the JS preview's 960-wide canvas)
+
+
+def _cover_fit(img, target_w, target_h):
+    """Scale `img` so it fills target_w x target_h, crop the overflow,
+    centred. Never letterboxes, never distorts (docs/specs/timer-
+    backgrounds.md): the scale is the LARGER of the two axis ratios, so
+    the shorter axis always overshoots and gets cropped, not padded.
+    """
+    src_w, src_h = img.size
+    scale = max(target_w / float(src_w), target_h / float(src_h))
+    new_w = max(target_w, int(math.ceil(src_w * scale)))
+    new_h = max(target_h, int(math.ceil(src_h * scale)))
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    x0 = (new_w - target_w) // 2
+    y0 = (new_h - target_h) // 2
+    return img.crop((x0, y0, x0 + target_w, y0 + target_h))
+
+
+def cover_fit_image(img):
+    """Cover-fit an already-open PIL image to 1920x1080 RGB.
+
+    Shared with app.py's background-library upload route, which cover-fits
+    ONCE at upload time so every stored image is already exactly 1920x1080
+    and this same step inside prepare_background() below is a cheap no-op
+    for it at render time (docs/specs/timer-backgrounds.md).
+    """
+    return _cover_fit(img.convert("RGB"), WIDTH, HEIGHT)
+
+
+def prepare_background(path, dim, blur):
+    """A background image ready to paste a style's track onto: cover-fit
+    to 1920x1080, then (if `blur`) Gaussian-blurred, then blended toward
+    black by `dim` percent (0-100). Pure function of its inputs — no
+    caching, no video — so smoke can exercise cover-fit/dim/blur directly.
+
+    Order is cover-fit -> blur -> dim, matching the JS preview exactly:
+    blurring AFTER dimming would wash the blur out (docs/specs/timer-
+    backgrounds.md).
+    """
+    img = Image.open(path)
+    img.load()
+    img = cover_fit_image(img)
+    if blur:
+        img = img.filter(ImageFilter.GaussianBlur(BG_BLUR_RADIUS))
+    if dim > 0:
+        black = Image.new("RGB", img.size, (0, 0, 0))
+        img = Image.blend(img, black, dim / 100.0)
+    return img
+
+
+def _plates(options, style, accent):
+    """Build every background 'plate' this render will cycle through: a
+    full 1920x1080 image (an uploaded background, prepared per
+    prepare_background(), or the plain vignette with none chosen) with
+    the style's static track already painted on top — i.e. each plate is
+    exactly what the single `bg` this renderer built before this feature
+    existed. With no images this returns a ONE-element list built from
+    the untouched vignette path, so that case is byte-identical to today
+    (docs/specs/timer-backgrounds.md).
+
+    Returns (plates, accent_tile). accent_tile is a plain colour fill
+    independent of any background image, so it is only ever built once,
+    same as before this feature existed.
+    """
+    paths = options.get("backgrounds") or []
+    bg_dim = options.get("bg_dim", 45)
+    bg_blur = bool(options.get("bg_blur", False))
+
+    if paths:
+        plates = [prepare_background(p, bg_dim, bg_blur) for p in paths]
+    else:
+        plates = [_background().copy()]
+
+    for plate in plates:
+        if style == "ring":
+            plate.paste(Image.new("RGB", (_RING_TILE, _RING_TILE), TRACK),
+                        _RING_ORIGIN, _ring_mask(1.0))
+        elif style == "bar":
+            plate.paste(Image.new("RGB", (BAR_WIDTH, BAR_HEIGHT), TRACK),
+                        (BAR_MARGIN, BAR_TOP), _bar_mask(1.0))
+
+    accent_tile = None
+    if style == "ring":
+        accent_tile = Image.new("RGB", (_RING_TILE, _RING_TILE), accent)
+    elif style == "bar":
+        accent_tile = Image.new("RGB", (BAR_WIDTH, BAR_HEIGHT), accent)
+    return plates, accent_tile
+
+
+def plate_index(i, fps, bg_seconds, n_plates):
+    """Which plate frame `i` (rendered at `fps`) should show.
+
+    A hard cut, never a crossfade (docs/specs/timer-backgrounds.md): the
+    background stays constant for a whole bg_seconds stretch, so the
+    per-second base cache below keeps working and cycling costs
+    essentially nothing extra to render. n_plates<=1 always returns 0
+    without even looking at fps/bg_seconds — the no-image and
+    single-image cases can never advance.
+    """
+    if n_plates <= 1:
+        return 0
+    return int((i / float(fps)) / bg_seconds) % n_plates
+
+
+# ---- digit shadow (readability over a busy background image) -----------------
+#
+# Dim and blur alone can't guarantee the digits stay readable — that depends
+# on what the operator happens to upload, and a bright, busy photo can still
+# swamp light digits even dimmed (found by rendering a real church graphic,
+# worst in the ring style where the time sits over a light card). So when a
+# real background IMAGE is in use (never the plain vignette) a soft dark
+# halo drops in behind the digit block before it is pasted, built straight
+# from the block's own alpha: MaxFilter thickens the glyphs into one solid
+# silhouette, GaussianBlur softens that into a shadow, then black is painted
+# through it at partial strength so it reads as a shadow, not a black box.
+
+_SHADOW_EXPAND = 9        # MaxFilter kernel (px, must be odd) that thickens
+                          # the glyphs into one solid blob before blurring
+_SHADOW_BLUR = 18         # Gaussian radius at 1920x1080 — same scale as
+                          # BG_BLUR_RADIUS
+_SHADOW_STRENGTH = 0.70   # opacity of the black paste at the halo's core
+_SHADOW_PAD = 60          # margin reserved around the digit block so the
+                          # blur falls off before the mask's own edge
+                          # instead of being clipped into a hard cutoff
+
+
+def _digit_shadow(alpha):
+    """A halo mask (an 'L' image, bigger than `alpha`) plus the padding
+    it was built with — the caller pastes it at (x - pad, y - pad) so it
+    is centred behind wherever the digit block itself lands.
+    """
+    pad = _SHADOW_PAD
+    canvas = Image.new(
+        "L", (alpha.width + 2 * pad, alpha.height + 2 * pad), 0)
+    canvas.paste(alpha, (pad, pad))
+    canvas = canvas.filter(ImageFilter.MaxFilter(_SHADOW_EXPAND))
+    canvas = canvas.filter(ImageFilter.GaussianBlur(_SHADOW_BLUR))
+    if _SHADOW_STRENGTH < 1.0:
+        # point() builds a 256-entry lookup table from this, so it's a
+        # cheap C-side apply, not a per-pixel Python loop.
+        canvas = canvas.point(lambda v: int(v * _SHADOW_STRENGTH))
+    return canvas, pad
+
+
+def _paste_digits(base, block, x, y, has_bg):
+    """Paste an RGBA digits/clock `block` onto `base` at (x, y).
+
+    With `has_bg` (a real background image, not the plain vignette) this
+    first drops the soft dark halo described above so the digits stay
+    legible over a busy, bright photo. With no background image this is
+    exactly `base.paste(block, (x, y), block)` — the one line this whole
+    feature replaces — so the byte-identical no-background guarantee
+    (docs/specs/timer-backgrounds.md) holds for this addition too.
+    """
+    if has_bg:
+        halo, pad = _digit_shadow(block.split()[-1])
+        black = Image.new("RGB", halo.size, (0, 0, 0))
+        base.paste(black, (x - pad, y - pad), halo)
+    base.paste(block, (x, y), block)
 
 
 # ---- ring / bar masks ---------------------------------------------------------
@@ -484,15 +653,19 @@ def _render_clock(options, progress_cb):
         out_fps = TIMER_OUTPUT_FPS
     total_frames = duration * fps
 
-    # Static layers: vignette + this style's track, built once (identical to
-    # the countdown ring/bar setup — the shared _background/_ring_mask are
-    # untouched by clock mode).
-    bg = _background().copy()
-    accent_tile = None
-    if style == "ring":
-        bg.paste(Image.new("RGB", (_RING_TILE, _RING_TILE), TRACK),
-                 _RING_ORIGIN, _ring_mask(1.0))
-        accent_tile = Image.new("RGB", (_RING_TILE, _RING_TILE), accent)
+    # Static layers: one plate per background image (vignette + this
+    # style's track painted on each), built once (identical to the
+    # countdown's _plates() call — the shared _background/_ring_mask are
+    # untouched by clock mode). With no images n_plates is 1 and
+    # plate_index() always returns 0, so this is the original single `bg`
+    # under a new name (docs/specs/timer-backgrounds.md).
+    plates, accent_tile = _plates(options, style, accent)
+    n_plates = len(plates)
+    bg_seconds = max(2, min(120, _to_int(options.get("bg_seconds"), 10)))
+    # A real background image, not the plain vignette — gates the digit
+    # shadow below (_paste_digits) so a plain-vignette render never grows
+    # one and stays byte-identical to before this feature existed.
+    has_bg = bool(options.get("backgrounds"))
 
     sample_main, _sample_tag = format_clock_time(
         start_ms, fmt, show_seconds, show_millis)
@@ -517,34 +690,37 @@ def _render_clock(options, progress_cb):
     # Same per-second base cache as the countdown's base_for, but keyed on
     # the displayed text/tag rather than remaining seconds — skipped
     # entirely when millis are on, since then every frame is unique anyway.
+    # Cap scales with the plate count exactly like the countdown's (16 with
+    # no cycling, up to 4x for a cycling background).
     bases = OrderedDict()
     bases_lock = threading.Lock()
+    bases_cap = 16 * min(4, n_plates)
 
     def block_for(big, small, tag):
         return _render_clock_block(
             big, small, tag, DIGITS_COLOR, accent, met_main, met_ms,
             tag_font, tag_width)
 
-    def base_for(big, small, tag):
-        key = (big, small, tag)
+    def base_for(big, small, tag, idx):
+        key = (big, small, tag, idx)
         with bases_lock:
             cached = bases.get(key)
             if cached is not None:
                 bases.move_to_end(key)
                 return cached
         block = block_for(big, small, tag)
-        base = bg.copy()
-        base.paste(block,
-                   (WIDTH // 2 - block.width // 2,
-                    digits_cy - block.height // 2),
-                   block)
+        base = plates[idx].copy()
+        _paste_digits(base, block,
+                      WIDTH // 2 - block.width // 2,
+                      digits_cy - block.height // 2, has_bg)
         with bases_lock:
             bases[key] = base
-            while len(bases) > 16:
+            while len(bases) > bases_cap:
                 bases.popitem(last=False)
         return base
 
     def make_frame(i):
+        idx = plate_index(i, fps, bg_seconds, n_plates)
         ms_elapsed = int(round(i * 1000.0 / fps))
         total_ms = start_ms + ms_elapsed
         main_text, tag = format_clock_time(
@@ -552,13 +728,12 @@ def _render_clock(options, progress_cb):
         if show_millis:
             big, small = main_text[:-4], main_text[-4:]
             block = block_for(big, small, tag)
-            base = bg.copy()
-            base.paste(block,
-                       (WIDTH // 2 - block.width // 2,
-                        digits_cy - block.height // 2),
-                       block)
+            base = plates[idx].copy()
+            _paste_digits(base, block,
+                          WIDTH // 2 - block.width // 2,
+                          digits_cy - block.height // 2, has_bg)
         else:
-            base = base_for(main_text, "", tag)
+            base = base_for(main_text, "", tag, idx)
         if style != "ring":
             return base
         frame = base.copy()
@@ -621,17 +796,18 @@ def render_timer(options, progress_cb):
     # never appear; always render at least one second of the finished state.
     total_frames = (total + max(1, hold)) * fps
 
-    # Static layers: vignette + this style's track, built once.
-    bg = _background().copy()
-    accent_tile = None
-    if style == "ring":
-        bg.paste(Image.new("RGB", (_RING_TILE, _RING_TILE), TRACK),
-                 _RING_ORIGIN, _ring_mask(1.0))
-        accent_tile = Image.new("RGB", (_RING_TILE, _RING_TILE), accent)
-    elif style == "bar":
-        bg.paste(Image.new("RGB", (BAR_WIDTH, BAR_HEIGHT), TRACK),
-                 (BAR_MARGIN, BAR_TOP), _bar_mask(1.0))
-        accent_tile = Image.new("RGB", (BAR_WIDTH, BAR_HEIGHT), accent)
+    # Static layers: one plate per background image (vignette + this
+    # style's track painted on each), built once. With no images this is
+    # the original single `bg` under a new name (docs/specs/timer-
+    # backgrounds.md) — n_plates is 1 and plate_index() always returns 0,
+    # so nothing below changes behaviour for that case.
+    plates, accent_tile = _plates(options, style, accent)
+    n_plates = len(plates)
+    bg_seconds = max(2, min(120, _to_int(options.get("bg_seconds"), 10)))
+    # A real background image, not the plain vignette — gates the digit
+    # shadow below (_paste_digits) so a plain-vignette render never grows
+    # one and stays byte-identical to before this feature existed.
+    has_bg = bool(options.get("backgrounds"))
 
     initial_text = _format_remaining(total, total)
     if style == "ring":
@@ -664,37 +840,40 @@ def render_timer(options, progress_cb):
         "timer", "{0}m{1:02d}s_{2}{3}".format(
             total // 60, total % 60, style, "_ms" if show_millis else ""))
 
-    # Digit bases (background + digits for one displayed second) are shared
-    # by every frame within that second. The cache is small and lock-guarded
-    # so frame generation can run on the encode_parallel thread pool —
-    # frames are pure functions of their index. LRU-capped: a 2h timer would
-    # otherwise hold thousands of full frames (~6 MB each) in memory.
+    # Digit bases (a plate + digits for one displayed second) are shared by
+    # every frame within that second. The cache is small and lock-guarded so
+    # frame generation can run on the encode_parallel thread pool — frames
+    # are pure functions of their index. LRU-capped: a 2h timer would
+    # otherwise hold thousands of full frames (~6 MB each) in memory. The cap
+    # scales with the plate count (capped at 4x) so a cycling background
+    # doesn't thrash the cache — n_plates==1 keeps today's exact cap of 16.
     bases = OrderedDict()
     bases_lock = threading.Lock()
+    bases_cap = 16 * min(4, n_plates)
 
-    def base_for(rem):
+    def base_for(rem, idx):
         color = accent if (warn_last10 and rem <= 10) else DIGITS_COLOR
         text = _format_remaining(rem, total)
-        key = (text, color)
+        key = (text, color, idx)
         with bases_lock:
             cached = bases.get(key)
             if cached is not None:
                 bases.move_to_end(key)
                 return cached
         block = _render_digits(text, color, met)
-        base = bg.copy()
-        base.paste(block,
-                   (WIDTH // 2 - block.width // 2,
-                    digits_cy - block.height // 2),
-                   block)
+        base = plates[idx].copy()
+        _paste_digits(base, block,
+                      WIDTH // 2 - block.width // 2,
+                      digits_cy - block.height // 2, has_bg)
         with bases_lock:
             bases[key] = base
-            while len(bases) > 16:
+            while len(bases) > bases_cap:
                 bases.popitem(last=False)
         return base
 
     def make_frame(i):
         t = i / float(fps)
+        idx = plate_index(i, fps, bg_seconds, n_plates)
         if show_millis:
             # Every frame's ms is unique (30fps, no per-second repeats), so
             # there is no base cache here — matches clock mode's millis path
@@ -712,15 +891,14 @@ def render_timer(options, progress_cb):
             ms_text = ".{0:03d}".format(rem_ms % 1000)
             block = _render_clock_block(main_text, ms_text, "", color, color,
                                         met, met_ms, None, 0)
-            base = bg.copy()
-            base.paste(block,
-                       (WIDTH // 2 - block.width // 2,
-                        digits_cy - block.height // 2),
-                       block)
+            base = plates[idx].copy()
+            _paste_digits(base, block,
+                          WIDTH // 2 - block.width // 2,
+                          digits_cy - block.height // 2, has_bg)
         else:
             elapsed = int(t)
             rem = total - elapsed if elapsed < total else 0
-            base = base_for(rem)
+            base = base_for(rem, idx)
         if style == "classic":
             return base                  # nothing animates within a second
         frame = base.copy()
