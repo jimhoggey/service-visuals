@@ -612,6 +612,50 @@ def check_clock_validation():
                  "Blur must be true or false.")
 
 
+def check_boot_marker_is_packaged_only():
+    """A source run must not touch the installed app's boot marker.
+
+    Running from source shares ~/.service-visuals with the packaged app. A
+    dev server used to arm the marker there and, if killed before any UI
+    hit /api/health, leave it behind — so the next launch of the REAL app
+    reported a startup_failed that never happened. It must also not CLEAR
+    the marker, or a dev server would silence a genuine failure.
+    """
+    import stats
+
+    print("Stats: the boot marker is packaged-only")
+    marker = stats.BOOT_PATH
+    if os.path.exists(marker):
+        os.unlink(marker)
+
+    # A source run (not frozen, STATS unset) must leave the marker alone.
+    stats._state.update(armed=False, booted=False)
+    os.environ.pop("SERVICE_VISUALS_STATS", None)
+    stats.report_previous_boot()
+    check("a source run does not arm the marker",
+          not os.path.exists(marker), "a dev run wrote a boot marker")
+
+    # Plant one as if the packaged app had left it, then confirm a source
+    # run does not delete it out from under the real app.
+    stats.mark_boot("9.9.9")
+    stats._state.update(booted=False)
+    stats.boot_ready()
+    check("a source run does not clear the packaged app's marker",
+          os.path.exists(marker), "a dev run cleared a real marker")
+    os.unlink(marker)
+
+    # Forced on (what the packaged app looks like), it works as designed.
+    os.environ["SERVICE_VISUALS_STATS"] = "1"
+    stats._state.update(armed=False, booted=False)
+    stats.report_previous_boot()
+    check("a reporting run does arm the marker", os.path.exists(marker))
+    stats._state.update(booted=False)
+    stats.boot_ready()
+    check("a reporting run clears its own marker",
+          not os.path.exists(marker))
+    os.environ["SERVICE_VISUALS_STATS"] = "0"
+
+
 def check_update_picks_newest_version():
     """The updater must offer the highest VERSION, not the newest upload."""
     from app import newest_release, _release_version, _version_tuple
@@ -1124,6 +1168,8 @@ def main():
     check_countdown_millis_format()
     print()
     check_clock_validation()
+    print()
+    check_boot_marker_is_packaged_only()
     print()
     check_update_picks_newest_version()
     print()

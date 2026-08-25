@@ -230,17 +230,26 @@ def flush(timeout=3.0):
     return False
 
 
+def reporting(force=False):
+    """Whether this run may report anything at all.
+
+    Packaged, opted in, and not explicitly silenced. Factored out of start()
+    because the boot marker has to answer the same question: see
+    report_previous_boot() for what went wrong when it did not.
+    """
+    if os.environ.get("SERVICE_VISUALS_STATS") == "0":
+        return False
+    if not force and not getattr(sys, "frozen", False) \
+            and os.environ.get("SERVICE_VISUALS_STATS") != "1":
+        return False
+    return enabled()
+
+
 def start(app_version, force=False):
     """Begin a session. No-op when opted out, and when running from source
     (a developer's own runs are not usage) unless SERVICE_VISUALS_STATS=1."""
     _state["app_version"] = str(app_version)
-    if os.environ.get("SERVICE_VISUALS_STATS") == "0":
-        return False
-    import sys
-    if not force and not getattr(sys, "frozen", False) \
-            and os.environ.get("SERVICE_VISUALS_STATS") != "1":
-        return False
-    if not enabled():
+    if not reporting(force):
         return False
     with _lock:
         if _state["worker"] is not None:
@@ -428,7 +437,14 @@ def mark_boot(app_version):
 def boot_ready():
     """Clear THIS process's marker. A second instance started meanwhile
     owns the file now (its pid is in it), so leave that one alone: two
-    instances can lose a report, never invent one."""
+    instances can lose a report, never invent one.
+
+    A run that may not report must not clear the marker either — a dev
+    server answering /api/health would otherwise delete the packaged app's
+    marker and silence a genuine startup failure.
+    """
+    if not reporting():
+        return
     if _state.get("booted"):
         return
     _state["booted"] = True
@@ -486,6 +502,16 @@ def report_previous_boot():
     once per process — the launcher calls it before importing the app (so a
     crash inside those imports is covered) and the app calls it again.
     """
+    if not reporting():
+        # Running from source shares ~/.service-visuals with the INSTALLED
+        # app, so a dev server used to arm this marker in the owner's real
+        # config dir; killing it before any UI hit /api/health left the
+        # marker behind, and the next launch of the real app dutifully
+        # reported a startup_failed that never happened (error "unknown",
+        # because no crash was ever logged). "Did the app open for a user?"
+        # is only a meaningful question for a packaged build, so a source
+        # run now leaves the marker entirely alone.
+        return
     if _state.get("armed"):
         return
     _state["armed"] = True
