@@ -810,6 +810,21 @@ def _background_id_field(image_id):
     return image_id
 
 
+def _send_png(path):
+    """Serve a PNG without keeping the file open.
+
+    send_file(path) hands Flask the path and the handle stays open until
+    the response is finalised. POSIX does not care — you can unlink an
+    open file — but Windows refuses, so deleting a background image the
+    preview had just displayed raised straight out of os.unlink and the
+    route 500'd. CI caught it on the Windows runner and nowhere else.
+    Reading the bytes first costs one copy of a ~2 MB image over
+    localhost and makes delete behave the same on every platform.
+    """
+    with open(path, "rb") as handle:
+        return send_file(io.BytesIO(handle.read()), mimetype="image/png")
+
+
 def _background_path(image_id, suffix=".png"):
     """Resolve a validated id to its file, with the same realpath
     containment check every other id-addressed route in this file uses
@@ -903,8 +918,8 @@ def api_backgrounds_get(image_id):
             # only ever needs to hand back blur, never a dimmed image.
             blurred = prepare_background(path, 0, True)
             blurred.save(blur_path, format="PNG")
-        return send_file(blur_path, mimetype="image/png")
-    return send_file(path, mimetype="image/png")
+        return _send_png(blur_path)
+    return _send_png(path)
 
 
 @app.route("/api/backgrounds/<image_id>", methods=["DELETE"])
@@ -917,12 +932,22 @@ def api_backgrounds_delete(image_id):
         _background_id_field(image_id)
     except ValidationError as exc:
         return jsonify({"error": str(exc)}), 400
-    path = _background_path(image_id)
-    if path is not None and os.path.isfile(path):
-        os.unlink(path)
-    blur_path = _background_path(image_id, ".blur.png")
-    if blur_path is not None and os.path.isfile(blur_path):
-        os.unlink(blur_path)
+    stuck = False
+    for target in (_background_path(image_id),
+                   _background_path(image_id, ".blur.png")):
+        if target is None or not os.path.isfile(target):
+            continue
+        try:
+            os.unlink(target)
+        except OSError:
+            # Belt and braces behind _send_png: if something still holds
+            # the file, say so in a sentence rather than 500ing at the
+            # operator with a Windows error number.
+            stuck = True
+    if stuck:
+        return jsonify({"error": (
+            "That image is still in use — close the timer preview and "
+            "try deleting it again.")}), 409
     return jsonify({"ok": True})
 
 
@@ -1024,7 +1049,7 @@ def api_board_source(board_id):
     path = os.path.realpath(os.path.join(root, board_id, "source.png"))
     if not path.startswith(root + os.sep) or not os.path.isfile(path):
         return jsonify({"error": "That board no longer exists."}), 404
-    return send_file(path, mimetype="image/png")
+    return _send_png(path)
 
 
 @app.route("/api/board/<board_id>/values", methods=["POST"])
