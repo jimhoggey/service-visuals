@@ -612,6 +612,40 @@ def check_clock_validation():
                  "Blur must be true or false.")
 
 
+def check_update_picks_newest_version():
+    """The updater must offer the highest VERSION, not the newest upload."""
+    from app import newest_release, _release_version, _version_tuple
+
+    print("Update: newest release is picked by version, not date")
+    # A hotfix on an old line published after a newer minor is the whole
+    # reason this exists — /releases/latest would answer v1.24.2 here.
+    feed = [
+        {"tag_name": "v1.24.2"},
+        {"tag_name": "v1.26.1"},
+        {"tag_name": "v1.25.0"},
+    ]
+    picked = newest_release(feed)
+    check("a later-published hotfix does not beat a higher version",
+          picked and picked["tag_name"] == "v1.26.1",
+          "picked {0!r}".format(picked and picked.get("tag_name")))
+
+    check("a client many versions behind is offered the newest",
+          _version_tuple("v1.26.1") > _version_tuple("1.13.0"))
+
+    check("drafts are never offered",
+          _release_version({"tag_name": "v9.9.9", "draft": True}) is None)
+    check("prereleases are never offered",
+          _release_version({"tag_name": "v9.9.9", "prerelease": True}) is None)
+    check("a tag that is not three numbers is skipped, not raised",
+          _release_version({"tag_name": "nightly"}) is None)
+    survivor = newest_release([{"tag_name": "nightly"},
+                               {"tag_name": "v1.26.1"}])
+    check("one malformed tag does not sink the whole check",
+          survivor and survivor["tag_name"] == "v1.26.1")
+    check("nothing installable yields None, so the caller can fall back",
+          newest_release([{"tag_name": "v9.9.9", "draft": True}]) is None)
+
+
 def check_stats_privacy():
     """What the anonymous error reports may contain, and what they may not."""
     import stats
@@ -1090,6 +1124,8 @@ def main():
     check_countdown_millis_format()
     print()
     check_clock_validation()
+    print()
+    check_update_picks_newest_version()
     print()
     check_stats_privacy()
     print()

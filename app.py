@@ -1284,6 +1284,53 @@ def _version_tuple(tag):
     return tuple(int(p) for p in tag.strip().lstrip("v").split(".")[:3])
 
 
+def _release_version(release):
+    """(major, minor, patch) for a release we could install, else None.
+
+    Drafts and prereleases are not for churches, and a tag that isn't three
+    numbers is skipped rather than allowed to raise — one malformed tag in
+    the list must not take the whole update check down with it.
+    """
+    if not isinstance(release, dict):
+        return None
+    if release.get("draft") or release.get("prerelease"):
+        return None
+    try:
+        return _version_tuple(release.get("tag_name") or "")
+    except (AttributeError, ValueError):
+        return None
+
+
+def newest_release(releases):
+    """The highest-VERSION release, not the most recently published one.
+
+    GitHub's /releases/latest means "most recent by publish date", which is
+    the same answer as "newest version" right up until a hotfix goes out on
+    an older line: publish v1.24.2 after v1.26.1 and /releases/latest
+    answers v1.24.2, so somebody still on v1.23 gets offered a version
+    OLDER than the newest one available, and never sees v1.26.1 at all.
+    Picking by version instead drops the dependency on publish order.
+    """
+    best = None
+    best_version = None
+    for release in releases or []:
+        version = _release_version(release)
+        if version is None:
+            continue
+        if best_version is None or version > best_version:
+            best, best_version = release, version
+    return best
+
+
+def _github_json(path, timeout=10):
+    req = urllib.request.Request(
+        "https://api.github.com/repos/%s/%s" % (GITHUB_REPO, path),
+        headers={"Accept": "application/vnd.github+json",
+                 "User-Agent": "service-visuals"})
+    with netutil.urlopen(req, timeout=timeout) as resp:
+        return json.load(resp)
+
+
 @app.route("/api/update-check")
 def api_update_check():
     # ?force=1 re-queries GitHub (the manual "Check for updates" button); the
@@ -1294,12 +1341,17 @@ def api_update_check():
         _update["checked"] = True
         _update["error"] = None
         try:
-            req = urllib.request.Request(
-                "https://api.github.com/repos/%s/releases/latest" % GITHUB_REPO,
-                headers={"Accept": "application/vnd.github+json",
-                         "User-Agent": "service-visuals"})
-            with netutil.urlopen(req, timeout=10) as resp:
-                data = json.load(resp)
+            # Ask for the whole list and pick the highest version. The old
+            # single /releases/latest call is kept as the fallback: if the
+            # list request fails or comes back with nothing installable, a
+            # working check on one release beats no check at all.
+            data = None
+            try:
+                data = newest_release(_github_json("releases?per_page=100"))
+            except Exception:
+                data = None
+            if data is None:
+                data = _github_json("releases/latest")
             tag = data.get("tag_name") or ""
             if _version_tuple(tag) > _version_tuple(APP_VERSION):
                 _update.update(available=True, latest=tag,

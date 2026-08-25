@@ -29,6 +29,12 @@ INTRO = "Nice. You're up to date."
 # run longer (92/94/106 chars) because they shipped before that guideline
 # was written down — left as-is rather than reworded after the fact.
 NOTES = {
+    "1.27.0": [
+        "Updates always jump straight to the newest version, however far "
+        "behind you are.",
+        "The blur option now shows in the preview, so you can see it before "
+        "you export.",
+    ],
     "1.26.0": [
         "This little box, so you stop finding out about features by accident.",
     ],
