@@ -235,6 +235,62 @@
     }, 250);
   }
 
+  // ------------------------------------------------------------ what's new
+  // Spec: docs/specs/whats-new.md. GET decides show/hide server-side (last-
+  // seen version vs. running version); this only ever renders what it is
+  // told and POSTs /seen on dismiss. A failed fetch must never block the
+  // app, so both requests below are fire-and-forget with an empty .catch.
+
+  function onWhatsNewKeydown(e) {
+    if (e.key === "Escape") dismissWhatsNew();
+  }
+
+  function showWhatsNew(data) {
+    $("whatsnew-pill").textContent = "v" + data.version;
+    $("whatsnew-intro").textContent = data.intro || "";
+    var list = $("whatsnew-list");
+    while (list.firstChild) list.removeChild(list.firstChild);
+    (data.items || []).forEach(function (line) {
+      var li = document.createElement("li");
+      li.textContent = line;
+      list.appendChild(li);
+    });
+    $("whatsnew-backdrop").hidden = false;
+    $("whatsnew-card").hidden = false;
+    // Removing [hidden] alone would snap straight to opacity 1 (the
+    // .is-open rule) with nothing to transition from — one more frame so
+    // the browser paints the opacity:0 state first, then flips it, is what
+    // actually plays the fade-in.
+    requestAnimationFrame(function () {
+      $("whatsnew-backdrop").classList.add("is-open");
+      $("whatsnew-card").classList.add("is-open");
+    });
+    document.addEventListener("keydown", onWhatsNewKeydown);
+    $("whatsnew-dismiss").focus();
+  }
+
+  function dismissWhatsNew() {
+    var card = $("whatsnew-card");
+    if (card.hidden) return;   // already dismissed — Esc/backdrop/button race
+    card.hidden = true;
+    $("whatsnew-backdrop").hidden = true;
+    card.classList.remove("is-open");
+    $("whatsnew-backdrop").classList.remove("is-open");
+    document.removeEventListener("keydown", onWhatsNewKeydown);
+    document.body.focus();
+    fetch("/api/whats-new/seen", { method: "POST" }).catch(function () {});
+  }
+
+  $("whatsnew-dismiss").addEventListener("click", dismissWhatsNew);
+  $("whatsnew-backdrop").addEventListener("click", dismissWhatsNew);
+
+  function initWhatsNew() {
+    fetch("/api/whats-new", { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("bad status")); })
+      .then(function (j) { if (j && j.show) showWhatsNew(j); })
+      .catch(function () {});
+  }
+
   // ----------------------------------------------------------------- views
 
   var VIEWS = ["view-home", "view-timer", "view-spinner", "view-qr", "view-motionbg", "view-board"];
@@ -271,40 +327,50 @@
   // in-place as images are added/deleted through this same panel.
   var timerBg = { ids: [], library: null };
 
-  // Preview Image objects, cached by id so a redraw triggered by an
+  // Preview Image objects, cached by (id, blur) so a redraw triggered by an
   // unrelated keystroke (dim slider, warn checkbox, ...) never re-fetches
   // or re-decodes an image that is already on screen — without this cache
   // the canvas would flash back to the plain background on every redraw
-  // while the fetch is in flight.
+  // while the fetch is in flight. Blurred and plain are separate cache
+  // entries and separate requests: the blur itself is now baked into the
+  // image server-side (see drawTimerBgPlate below) rather than a canvas
+  // filter, so the two are genuinely different images, not one image drawn
+  // two ways.
   var bgImageCache = {};
 
-  function getTimerBgImage(id) {
-    var entry = bgImageCache[id];
+  function bgImageCacheKey(id, blur) {
+    return id + (blur ? "|blur" : "|plain");
+  }
+
+  function getTimerBgImage(id, blur) {
+    var key = bgImageCacheKey(id, blur);
+    var entry = bgImageCache[key];
     if (entry) return entry;
     entry = { img: new Image(), loaded: false };
     entry.img.onload = function () {
       entry.loaded = true;
       drawTimerPreview();
     };
-    entry.img.src = "/api/backgrounds/" + encodeURIComponent(id);
-    bgImageCache[id] = entry;
+    entry.img.src = "/api/backgrounds/" + encodeURIComponent(id) +
+        (blur ? "?blur=1" : "");
+    bgImageCache[key] = entry;
     return entry;
   }
 
   // Cover-fit (scale to fill, crop the overflow, centred — never letterbox,
-  // never distort), then blur, then dim, in that order: mirrors
-  // prepare_background() in render/timer.py exactly, at preview scale.
-  // ctx.filter "blur(9px)" is HALF the renderer's 18px radius because this
-  // canvas is half the 1920x1080 export (PW/PH below).
-  function drawTimerBgPlate(ctx, img, blur, dimPct) {
-    ctx.save();
-    if (blur) ctx.filter = "blur(9px)";
+  // never distort), then dim. `img` already has the renderer's own blur
+  // baked in when BLUR is on (drawTimerBackground picked the right cached
+  // image below) — this used to also set `ctx.filter = "blur(9px)"` here,
+  // but CanvasRenderingContext2D.filter is a browser feature the app's
+  // embedded webview (pywebview -> WKWebView/WebView2) does not reliably
+  // apply, so the preview looked sharp while DIM (a plain fillRect, no
+  // browser feature involved) visibly worked. Fetching the real Pillow-
+  // blurred image instead guarantees parity by construction.
+  function drawTimerBgPlate(ctx, img, dimPct) {
     var scale = Math.max(PW / img.naturalWidth, PH / img.naturalHeight);
     var dw = img.naturalWidth * scale;
     var dh = img.naturalHeight * scale;
     ctx.drawImage(img, (PW - dw) / 2, (PH - dh) / 2, dw, dh);
-    ctx.restore();   // clear the blur filter before dimming — blurring the
-                      // dim overlay itself would wash the darkening out.
 
     ctx.save();
     ctx.fillStyle = "#000000";
@@ -318,9 +384,23 @@
   // the preview always shows the opening frame, cycling is video-only).
   function drawTimerBackground(ctx, t) {
     if (!t.backgrounds.length) { paintBackground(ctx); return; }
-    var entry = getTimerBgImage(t.backgrounds[0]);
-    if (!entry.loaded) { paintBackground(ctx); return; }
-    drawTimerBgPlate(ctx, entry.img, t.bgBlur, t.bgDim);
+    var id = t.backgrounds[0];
+    var entry = getTimerBgImage(id, t.bgBlur);
+    if (entry.loaded) {
+      drawTimerBgPlate(ctx, entry.img, t.bgDim);
+      return;
+    }
+    // The blurred variant is still loading (it may need a fresh render on
+    // the server the first time) — show the plain image already in cache,
+    // if there is one, rather than flash back to the plain dark background.
+    if (t.bgBlur) {
+      var plain = bgImageCache[bgImageCacheKey(id, false)];
+      if (plain && plain.loaded) {
+        drawTimerBgPlate(ctx, plain.img, t.bgDim);
+        return;
+      }
+    }
+    paintBackground(ctx);
   }
 
   function renderTimerBgStrip() {
@@ -488,11 +568,29 @@
   }
 
   // Only shown with 2+ images (spec table) — a single image never cycles,
-  // so there is nothing for "seconds per image" to mean.
+  // so there is nothing for "seconds per image" to mean. Dim and blur go the
+  // same way at zero images: with the plain dark background there is nothing
+  // to darken or soften, so offering the controls only invites the question
+  // of why moving them does nothing.
+  //
+  // Found from the ids rather than given their own, because index.html is
+  // being edited by another session right now and this needs no markup
+  // change: each control sits in a stable wrapper followed by its hint.
+  function timerBgOptional() {
+    var dim = $("timer-bg-dim").closest(".range-field");
+    var blur = $("timer-bg-blur").closest(".check-row");
+    return [dim, dim && dim.nextElementSibling,
+            blur, blur && blur.nextElementSibling];
+  }
+
   function applyTimerBg() {
     var multi = timerBg.ids.length >= 2;
+    var any = timerBg.ids.length >= 1;
     $("timer-bg-seconds-field").hidden = !multi;
     $("timer-bg-seconds-hint").hidden = !multi;
+    timerBgOptional().forEach(function (el) {
+      if (el) el.hidden = !any;
+    });
     $("timer-bg-dim-value").textContent = $("timer-bg-dim").value + "%";
   }
 
@@ -646,7 +744,9 @@
   // true when a real image is in use (never the plain vignette), so the
   // no-background preview never grows a shadow. shadowBlur 9 is HALF the
   // renderer's 18px radius because this canvas is half the 1920x1080
-  // export, same halving rule as drawTimerBgPlate's blur(9px) above.
+  // export — same halving rule the background blur used to apply via
+  // ctx.filter (now fetched pre-blurred from the server instead, see
+  // drawTimerBgPlate above, but the 18px/2 scale factor is the same one).
   // Reset to 0 straight after so nothing drawn afterwards (the ring/bar
   // track, etc.) inherits it.
   function drawClock(ctx, text, cx, cy, met, color, hasBg) {
@@ -3058,6 +3158,7 @@
   // boot
   refreshHealth();
   setInterval(refreshHealth, 10000);
+  initWhatsNew();
   checkForUpdate(false, false);
   updateTimer();
   updateSpinner();

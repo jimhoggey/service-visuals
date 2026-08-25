@@ -31,9 +31,11 @@ import aiassist
 import netutil
 import stats
 import updater
+import whatsnew
 from jobs import JobManager
 from render.encoder import EXPORTS_DIR, UPLOADS_DIR
-from render.timer import CLOCK_STYLES, cover_fit_image, render_timer
+from render.timer import (CLOCK_STYLES, cover_fit_image, prepare_background,
+                           render_timer)
 from render.spinner import render_spinner
 from render.qr import (POSITIONS, render_qr, render_qr_image,
                        render_qr_still)
@@ -676,6 +678,34 @@ def api_health():
     return jsonify({"ok": True, "platform": sys.platform})
 
 
+@app.route("/api/whats-new")
+def api_whats_new():
+    """Read-only (docs/specs/whats-new.md) — a GET must stay safe to
+    repeat, so nothing here writes last-seen.json; that only happens on
+    the dismiss POST below and at boot (prepare_exports_dir)."""
+    show = whatsnew.should_show(APP_VERSION)
+    items = whatsnew.notes_for(APP_VERSION) if show else []
+    if not items:
+        # NOTES having gone empty must never announce an empty card.
+        show = False
+    if show:
+        # Fired here, not on the dismiss POST: the UI fetches this once per
+        # boot, so this is one event per actual appearance of the card —
+        # including the case where the volunteer quits without clicking
+        # GOT IT, which the dismiss POST would never see at all.
+        stats.track("whats_new_shown")
+    return jsonify({"show": show, "version": APP_VERSION,
+                    "intro": whatsnew.INTRO, "items": items})
+
+
+@app.route("/api/whats-new/seen", methods=["POST"])
+def api_whats_new_seen():
+    """Dismiss: GOT IT / Esc / backdrop click all land here. Idempotent —
+    calling it twice just writes the same version twice."""
+    whatsnew.mark_seen(APP_VERSION)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/render", methods=["POST"])
 def api_render():
     if request.content_length and request.content_length > MAX_JSON_BYTES:
@@ -780,12 +810,14 @@ def _background_id_field(image_id):
     return image_id
 
 
-def _background_path(image_id):
+def _background_path(image_id, suffix=".png"):
     """Resolve a validated id to its file, with the same realpath
     containment check every other id-addressed route in this file uses
-    (_background_field, /api/board/<id>/source.png)."""
+    (_background_field, /api/board/<id>/source.png). `suffix` also
+    addresses the cached ?blur=1 variant (<id>.blur.png) alongside the
+    original — same containment check, just a different filename."""
     root = os.path.realpath(BACKGROUNDS_DIR)
-    path = os.path.realpath(os.path.join(root, image_id + ".png"))
+    path = os.path.realpath(os.path.join(root, image_id + suffix))
     if not path.startswith(root + os.sep):
         return None
     return path
@@ -843,6 +875,15 @@ def api_backgrounds_list():
 
 @app.route("/api/backgrounds/<image_id>", methods=["GET"])
 def api_backgrounds_get(image_id):
+    """?blur=1 (anything else is ignored, same as omitting it) returns the
+    image with the renderer's own blur applied (prepare_background, same
+    BG_BLUR_RADIUS render/timer.py uses for a real render) instead of the
+    plain original — the preview canvas draws this directly rather than
+    trying to reproduce the blur with a CSS/canvas filter, which the
+    embedded webview does not reliably apply (see docs/specs/timer-
+    backgrounds.md). The blurred variant is cached on disk next to the
+    original so repeat requests (every redraw while BLUR is on) are an
+    instant file read, not a re-blur."""
     try:
         _background_id_field(image_id)
     except ValidationError as exc:
@@ -851,6 +892,18 @@ def api_backgrounds_get(image_id):
     if path is None or not os.path.isfile(path):
         return jsonify({"error": "That background image no longer exists."}
                        ), 404
+    if request.args.get("blur") == "1":
+        blur_path = _background_path(image_id, ".blur.png")
+        if blur_path is None:
+            return jsonify({"error": "That is not a background image we "
+                                      "know about."}), 400
+        if not os.path.isfile(blur_path):
+            # dim=0 here: DIM is drawn separately (a plain black fillRect
+            # in the JS preview, Image.blend in the renderer) — this route
+            # only ever needs to hand back blur, never a dimmed image.
+            blurred = prepare_background(path, 0, True)
+            blurred.save(blur_path, format="PNG")
+        return send_file(blur_path, mimetype="image/png")
     return send_file(path, mimetype="image/png")
 
 
@@ -867,6 +920,9 @@ def api_backgrounds_delete(image_id):
     path = _background_path(image_id)
     if path is not None and os.path.isfile(path):
         os.unlink(path)
+    blur_path = _background_path(image_id, ".blur.png")
+    if blur_path is not None and os.path.isfile(blur_path):
+        os.unlink(blur_path)
     return jsonify({"ok": True})
 
 
@@ -1374,6 +1430,15 @@ def api_reveal():
 
 
 def prepare_exports_dir():
+    # Seeded FIRST, before anything else touches CONFIG_DIR: in particular
+    # stats.report_previous_boot() below drops its own boot-pending.json
+    # marker into that same directory on every launch, analytics on or
+    # off. Seeding after that would find the "config dir" already
+    # non-empty on every fresh install and never write last-seen.json at
+    # all — so a genuinely fresh install would silently stay unseeded and
+    # only be saved from showing the card by luck of request timing
+    # (docs/specs/whats-new.md's row 4 must not depend on that).
+    whatsnew.seed_if_fresh_install(APP_VERSION)
     os.makedirs(EXPORTS_DIR, exist_ok=True)
     updater.sweep_backups()
     stats.start(APP_VERSION)

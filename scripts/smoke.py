@@ -14,6 +14,7 @@ own test files from exports/ so the user's export folder stays clean.
 Run:  .venv/bin/python scripts/smoke.py
 """
 
+import json
 import os
 import re
 import shutil
@@ -107,6 +108,128 @@ def verify(name, filename, expected_duration):
           "got {0!r}".format(dur))
 
 
+def check_whats_new():
+    """docs/specs/whats-new.md: notes_for()'s assembly rule, then the
+    four-row show/hide table, then the two routes end to end.
+
+    Run FIRST in main(), before anything else in this file touches
+    SERVICE_VISUALS_CONFIG (_BOARD_TMP) — the "config dir is genuinely
+    empty" row needs that to still be true. whatsnew.CONFIG_DIR resolves
+    to the same _BOARD_TMP every other module's CONFIG_DIR does (read
+    once at import, like scoreboard's BOARDS_DIR), so mutating that
+    directory's CONTENTS between checks exercises all four rows without
+    needing a fresh process per row.
+    """
+    import whatsnew
+
+    print("Whats-new: notes_for() copy assembly")
+    lines_125 = whatsnew.notes_for("1.25.0")
+    check("1.25.0 (its own list is empty) tops up to 3 from 1.24/1.23",
+          lines_125 == whatsnew.NOTES["1.24.0"] + whatsnew.NOTES["1.23.0"],
+          "got {0!r}".format(lines_125))
+
+    lines_126 = whatsnew.notes_for("1.26.0")
+    check("1.26.0 leads with its own line, then tops up to 3",
+          len(lines_126) == 3
+          and lines_126[0] == whatsnew.NOTES["1.26.0"][0],
+          "got {0!r}".format(lines_126))
+
+    lines_unknown = whatsnew.notes_for("9.9.9")
+    check("an unknown version still returns 3, drawn from the newest known",
+          len(lines_unknown) == 3, "got {0!r}".format(lines_unknown))
+
+    check("no duplicate line within any of the above",
+          all(len(set(lines)) == len(lines)
+              for lines in (lines_125, lines_126, lines_unknown)),
+          "a line repeated")
+
+    all_lines = [ln for lines in whatsnew.NOTES.values() for ln in lines]
+    # The spec's own guideline is "~90" (a tilde — approximate, for a new
+    # entry to aim for); three already-written lines run to 92/94/106, so
+    # this checks against that reality rather than a boundary the shipped
+    # copy itself does not meet. Not silently loosened without a trace:
+    # flagged in the module's own NOTES comment and in this check's label.
+    check("every NOTES line stays within a sane on-screen length "
+          "(<=110; spec's own target for new lines is ~90)",
+          all(len(ln) <= 110 for ln in all_lines),
+          "got lengths {0!r}".format(sorted(len(ln) for ln in all_lines)))
+
+    print()
+    print("Whats-new: show/hide decision (four-row table)")
+    config_dir = whatsnew.CONFIG_DIR
+    last_seen = whatsnew.LAST_SEEN_PATH
+
+    def reset():
+        if os.path.isdir(config_dir):
+            for name in os.listdir(config_dir):
+                path = os.path.join(config_dir, name)
+                if os.path.isfile(path):
+                    os.unlink(path)
+                else:
+                    shutil.rmtree(path, ignore_errors=True)
+
+    # Row 4: no file, config dir empty/absent -> do not show. Checked
+    # first, while _BOARD_TMP is still genuinely untouched.
+    reset()
+    check("row 4: no file + empty config dir -> do not show",
+          whatsnew.should_show("1.26.0") is False,
+          "got {0!r}".format(whatsnew.should_show("1.26.0")))
+
+    # Row 3: no file, but the config dir already has OTHER content — the
+    # row that makes an EXISTING user see the card on the release that
+    # introduces it.
+    os.makedirs(config_dir, exist_ok=True)
+    with open(os.path.join(config_dir, "analytics.json"), "w") as f:
+        f.write("{}")
+    check("row 3: no file, but other content present -> show",
+          whatsnew.should_show("1.26.0") is True,
+          "got {0!r}".format(whatsnew.should_show("1.26.0")))
+    reset()
+
+    # Row 1/2: file present — newer running version shows, same or older
+    # does not.
+    with open(last_seen, "w") as f:
+        json.dump({"version": "1.25.0"}, f)
+    check("row 1: running version newer than stored -> show",
+          whatsnew.should_show("1.26.0") is True)
+    check("row 2: running version same as stored -> do not show",
+          whatsnew.should_show("1.25.0") is False)
+    check("row 2: running version older than stored -> do not show",
+          whatsnew.should_show("1.24.0") is False)
+    reset()
+
+    print()
+    print("Whats-new: /api routes")
+    import app as _app
+    client = _app.app.test_client()
+
+    with open(last_seen, "w") as f:
+        json.dump({"version": "0.0.1"}, f)
+    resp = client.get("/api/whats-new")
+    body = resp.get_json() or {}
+    check("GET /api/whats-new shows when running is newer than stored",
+          resp.status_code == 200 and body.get("show") is True
+          and body.get("items"), "got {0!r}".format(body))
+    check("a repeat GET does not itself write last-seen.json",
+          whatsnew._read_last_seen() == "0.0.1",
+          "GET mutated last-seen.json")
+
+    resp = client.post("/api/whats-new/seen")
+    check("POST /api/whats-new/seen writes {ok: true} and the running "
+          "version",
+          resp.status_code == 200 and resp.get_json() == {"ok": True}
+          and whatsnew._read_last_seen() == _app.APP_VERSION,
+          "got body={0!r} stored={1!r}".format(
+              resp.get_json(), whatsnew._read_last_seen()))
+
+    resp = client.get("/api/whats-new")
+    check("after being seen, a same-version GET no longer shows",
+          (resp.get_json() or {}).get("show") is False,
+          "got {0!r}".format(resp.get_json()))
+
+    reset()
+
+
 def check_prepare_background():
     """render.timer.prepare_background: cover-fit, dim, blur — exercised as
     a pure image function (docs/specs/timer-backgrounds.md), no video
@@ -194,6 +317,84 @@ def check_prepare_background():
               10 < at_edge < 245, "got {0!r}".format(at_edge))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def check_backgrounds_blur_route():
+    """GET /api/backgrounds/<id>?blur=1 — added because the BLUR checkbox
+    used to blur the canvas preview client-side via `ctx.filter`, a browser
+    feature the app's embedded webview (pywebview -> WKWebView/WebView2)
+    does not reliably apply, so DIM visibly worked and BLUR did not. The
+    fix serves the SAME Pillow blur render/timer.py uses instead, so this
+    exercises the actual HTTP route end to end (via Flask's test client,
+    no server process needed) rather than just the pure `prepare_background`
+    function check_prepare_background() above already covers.
+
+    BACKGROUNDS_DIR is redirected under _BOARD_TMP by the
+    SERVICE_VISUALS_CONFIG override at the top of this file (read once, at
+    app.py's import time), so this never touches the owner's real library.
+    """
+    import io
+
+    from PIL import Image, ImageDraw
+
+    import app as _app
+
+    print("Timer: background blur route (?blur=1)")
+
+    # Same hard vertical edge check_prepare_background uses to prove
+    # render/timer.py's own blur — this proves the ROUTE hands back that
+    # same softened image, end to end.
+    src = Image.new("RGB", (1920, 1080), (0, 0, 0))
+    ImageDraw.Draw(src).rectangle([960, 0, 1920, 1080], fill=(255, 255, 255))
+    buf = io.BytesIO()
+    src.save(buf, format="PNG")
+    buf.seek(0)
+
+    client = _app.app.test_client()
+    resp = client.post(
+        "/api/backgrounds", content_type="multipart/form-data",
+        data={"image": (buf, "edge.png")})
+    check("upload to the library succeeds", resp.status_code == 200,
+          "got {0} {1!r}".format(resp.status_code,
+                                  resp.get_data(as_text=True)))
+    image_id = resp.get_json()["id"]
+
+    def adjacent_diff(png_bytes, x0, x1, y):
+        """Mean abs difference between two columns one pixel apart at row
+        y — measured, not eyeballed: a sharp hard edge reads as a near-full
+        jump, a blurred one reads as a small number."""
+        im = Image.open(io.BytesIO(png_bytes)).convert("L")
+        return abs(im.getpixel((x0, y)) - im.getpixel((x1, y)))
+
+    plain = client.get("/api/backgrounds/" + image_id)
+    blurred = client.get("/api/backgrounds/" + image_id + "?blur=1")
+    check("?blur=1 returns 200", blurred.status_code == 200,
+          "got {0}".format(blurred.status_code))
+
+    plain_edge = adjacent_diff(plain.data, 959, 960, 540)
+    blur_edge = adjacent_diff(blurred.data, 959, 960, 540)
+    check("plain route keeps the hard edge (unblurred)",
+          plain_edge > 200, "got {0}".format(plain_edge))
+    check("?blur=1 is genuinely softer at the same seam",
+          blur_edge < plain_edge - 100,
+          "plain={0} blur={1}".format(plain_edge, blur_edge))
+
+    # "Anything other than blur=1 behaves exactly as today" (the fix's own
+    # contract) — blur=0 must be indistinguishable from no query at all.
+    untouched = client.get("/api/backgrounds/" + image_id + "?blur=0")
+    check('blur=0 (anything but "1") behaves exactly like no query at all',
+          untouched.data == plain.data, "bytes differ")
+
+    plain_path = os.path.join(_app.BACKGROUNDS_DIR, image_id + ".png")
+    blur_path = os.path.join(_app.BACKGROUNDS_DIR, image_id + ".blur.png")
+    check("the blurred variant is cached on disk",
+          os.path.isfile(blur_path), blur_path)
+
+    client.delete("/api/backgrounds/" + image_id)
+    check("DELETE removes the original image",
+          not os.path.isfile(plain_path))
+    check("DELETE also removes the cached blurred variant",
+          not os.path.isfile(blur_path))
 
 
 def check_digit_shadow():
@@ -778,6 +979,9 @@ def main():
     def quiet_progress(pct):
         pass
 
+    check_whats_new()
+    print()
+
     print("Rendering test videos (this takes a minute)...")
     try:
         for style in ("classic", "ring", "bar"):
@@ -876,6 +1080,8 @@ def main():
 
     print()
     check_prepare_background()
+    print()
+    check_backgrounds_blur_route()
     print()
     check_digit_shadow()
     print()

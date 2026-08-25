@@ -934,5 +934,24 @@
   </label>
 </footer>
 
+<!-- ============================== WHAT'S NEW ============================== -->
+<!-- Card + backdrop are separate fixed siblings (not nested) so a click
+     anywhere on the card is hit-tested against the card element itself and
+     never reaches the backdrop's click-to-dismiss handler — no
+     stopPropagation needed. Both start hidden; app.js fetches
+     /api/whats-new once on boot and only unhides these if show is true. -->
+<div class="whatsnew-backdrop" id="whatsnew-backdrop" hidden></div>
+<div class="whatsnew-card" id="whatsnew-card" role="dialog" aria-modal="true" aria-labelledby="whatsnew-title" hidden>
+  <div class="whatsnew-head">
+    <span class="whatsnew-title" id="whatsnew-title">WHAT'S NEW</span>
+    <span class="whatsnew-pill" id="whatsnew-pill">v&#8212;</span>
+  </div>
+  <p class="whatsnew-intro" id="whatsnew-intro"></p>
+  <ul class="whatsnew-list" id="whatsnew-list"></ul>
+  <div class="whatsnew-foot">
+    <button type="button" class="btn btn-accent" id="whatsnew-dismiss">GOT IT</button>
+  </div>
+</div>
+
 </body>
 </html>

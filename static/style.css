@@ -1608,3 +1608,76 @@ input[type="range"] {
 }
 .stats-toggle:hover { color: var(--ink-dim); }
 .stats-toggle input { accent-color: var(--accent); margin: 0; }
+
+/* ---- What's new card (v1.26.0) ----
+   Backdrop and card are separate fixed elements, not nested (see the
+   comment in index.html) — that is what makes a plain backdrop click
+   listener work as "click outside the card" without stopPropagation. */
+.whatsnew-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(7, 8, 10, 0.72);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.whatsnew-backdrop.is-open { opacity: 1; }
+
+.whatsnew-card {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 101;
+  width: calc(100% - 40px);
+  max-width: 460px;
+  padding: 22px 24px 20px;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.whatsnew-card.is-open { opacity: 1; }
+
+.whatsnew-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.whatsnew-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+.whatsnew-pill {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  border: 1px solid rgba(232, 180, 79, 0.4);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.whatsnew-intro {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+.whatsnew-list {
+  margin: 0 0 18px;
+  padding-left: 20px;
+  color: var(--ink-dim);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.whatsnew-list li + li { margin-top: 8px; }
+.whatsnew-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+/* prefers-reduced-motion already kills every transition, incl. these two
+   (see the global `* { transition: none !important }` rule above). */

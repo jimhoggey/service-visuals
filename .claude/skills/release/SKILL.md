@@ -49,6 +49,10 @@ still byte-identical (see CLAUDE.md for the recipe).
 
 ## 4. Bump, commit, tag, push
 
+Update `whatsnew.py`'s `NOTES` dict for this version before tagging (leave
+the list empty if the release has nothing user-facing — `notes_for`'s
+fallback handles it).
+
 ```bash
 # version.py — the only place the version lives
 printf '"""Single source of the app version (read by app.py, desktop.py, CI)."""\n\nAPP_VERSION = "X.Y.Z"\n' > version.py
