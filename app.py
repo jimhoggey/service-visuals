@@ -125,11 +125,15 @@ def _one_of(value, allowed, default):
 
 
 def _timer_props(options):
-    n = len(options.get("backgrounds") or [])
+    if options.get("green_screen"):
+        bg = "green"
+    else:
+        n = len(options.get("backgrounds") or [])
+        bg = "none" if n == 0 else ("one" if n == 1 else "many")
     return {"mode": _one_of(options.get("mode"),
                             ("countdown", "clock"), "countdown"),
             "style": _one_of(options.get("style"), TIMER_STYLES, "classic"),
-            "bg": "none" if n == 0 else ("one" if n == 1 else "many")}
+            "bg": bg}
 
 
 def _spinner_props(options):
@@ -479,17 +483,26 @@ def _timer_background_options(options):
     """The four Background-group keys, shared verbatim by countdown and
     clock validation (docs/specs/timer-backgrounds.md) — both modes offer
     the same group, so there is exactly one place that can drift.
+
+    green_screen (docs/specs/green-screen.md) lives here too, for the same
+    reason: when it's true the normalised "backgrounds" is forced to []
+    WITHOUT ever calling _backgrounds_field(), so a stale/deleted image id
+    left in a hidden set can't block a green export.
     """
+    green_screen = options.get("green_screen", False)
+    if not isinstance(green_screen, bool):
+        raise ValidationError("Green screen must be true or false.")
     bg_dim = _int_field(options, "bg_dim", 0, 80, 45, "Dim")
     bg_blur = options.get("bg_blur", False)
     if not isinstance(bg_blur, bool):
         raise ValidationError("Blur must be true or false.")
     return {
-        "backgrounds": _backgrounds_field(options),
+        "backgrounds": [] if green_screen else _backgrounds_field(options),
         "bg_seconds": _int_field(
             options, "bg_seconds", 2, 120, 10, "Seconds per image"),
         "bg_dim": bg_dim,
         "bg_blur": bg_blur,
+        "green_screen": green_screen,
     }
 
 

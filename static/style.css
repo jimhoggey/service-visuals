@@ -892,6 +892,26 @@ canvas {
 
 .bg-strip-empty { margin: 0; }
 
+/* ---- Green screen toggle (spec: docs/specs/green-screen.md) ---- */
+/* Kept subtle (spec): plain .btn/.btn-file look off, a small dot that
+   turns green + glows on — mirrors the .led status-dot treatment used
+   for the connection indicator, rather than inventing a new motif. */
+.btn-green-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6a6e75;
+}
+#timer-bg-green[aria-pressed="true"] {
+  border-color: var(--green);
+  color: var(--green);
+  background: rgba(63, 220, 123, 0.1);
+}
+#timer-bg-green[aria-pressed="true"] .btn-green-dot {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(63, 220, 123, 0.75);
+}
+
 /* Small inline panel (not a modal) opened by "+ ADD IMAGE" — same treatment
    as the spinner's .ai-panel. */
 .bg-picker {

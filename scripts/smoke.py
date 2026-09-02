@@ -540,11 +540,14 @@ def check_clock_validation():
     # Addendum (v1.24.0): the four Background-group keys, defaulting to "no
     # images" (docs/specs/timer-backgrounds.md) — same idea, a caller that
     # never heard of backgrounds still gets those defaults for free.
+    # Addendum (green-screen.md): green_screen defaults to False, sitting
+    # alongside the other three Background-group defaults for a caller that
+    # never heard of it either.
     expected = {"minutes": 1, "seconds": 0, "style": "ring",
                 "accent": "#e8b44f", "warn_last10": False,
                 "hold_seconds": 3, "show_millis": False,
                 "backgrounds": [], "bg_seconds": 10, "bg_dim": 45,
-                "bg_blur": False}
+                "bg_blur": False, "green_screen": False}
     clean = app.validate_timer_options(countdown)
     check("a countdown payload (mode absent) validates unchanged",
           clean == expected, "got {0!r}".format(clean))
@@ -610,6 +613,93 @@ def check_clock_validation():
     expect_error("bg_blur must be a boolean",
                  dict(countdown, bg_blur="yes"),
                  "Blur must be true or false.")
+
+    # docs/specs/green-screen.md: green_screen bool, valid in both modes.
+    # When true, backgrounds normalises to [] WITHOUT validating the ids
+    # sent — a bogus/stale id in a hidden image set must not block a green
+    # export.
+    clean = app.validate_timer_options(
+        dict(countdown, green_screen=True,
+             backgrounds=["deadbeefdeadbeef"]))
+    check("green_screen=True (countdown): backgrounds -> [] even with a "
+          "bogus id",
+          clean.get("green_screen") is True
+          and clean.get("backgrounds") == [], "got {0!r}".format(clean))
+    clean = app.validate_timer_options(
+        dict(clock, green_screen=True,
+             backgrounds=["deadbeefdeadbeef"]))
+    check("green_screen=True (clock): backgrounds -> [] even with a "
+          "bogus id",
+          clean.get("green_screen") is True
+          and clean.get("backgrounds") == [], "got {0!r}".format(clean))
+
+    clean = app.validate_timer_options(countdown)
+    check("green_screen omitted defaults to False",
+          clean.get("green_screen") is False, "got {0!r}".format(clean))
+
+    expect_error("green_screen must be a boolean",
+                 dict(countdown, green_screen="yes"),
+                 "Green screen must be true or false.")
+
+
+def check_green_screen():
+    """docs/specs/green-screen.md: render.timer._plates() builds a flat
+    green plate straight off the option, then a real encoded render proves
+    that plate survives all the way through H.264 to a frame you can pull
+    back out.
+    """
+    from PIL import Image
+
+    from render.timer import _plates
+
+    print("Timer: green screen plate + render")
+
+    plates, _accent_tile = _plates({"green_screen": True}, "ring", (1, 2, 3))
+    check("_plates() with green_screen returns exactly one plate",
+          len(plates) == 1, "got {0!r}".format(len(plates)))
+    px = plates[0].getpixel((10, 10))
+    check("that plate's pixel (10, 10) is pure green (0, 255, 0)",
+          px == (0, 255, 0), "got {0!r}".format(px))
+
+    # A real 6s classic countdown, green screen on — same shape (6s run +
+    # 2s hold) as the plain countdown renders in main(), but checked on its
+    # own here since it needs a frame pulled and inspected, not just the
+    # container/duration verify() already covers.
+    filename = render_timer(
+        {"minutes": 0, "seconds": 6, "style": "classic",
+         "accent": "#e8b44f", "warn_last10": True, "hold_seconds": 2,
+         "green_screen": True},
+        lambda pct: None)
+    path = os.path.join(EXPORTS_DIR, filename)
+    try:
+        check("filename carries the _green descriptor",
+              "_green" in filename, "got {0!r}".format(filename))
+        verify("timer/classic-green", filename, 8.0)
+
+        frame_dir = tempfile.mkdtemp(prefix="sv-smoke-green-")
+        try:
+            frame_path = os.path.join(frame_dir, "frame0.png")
+            proc = subprocess.run(
+                [FFMPEG, "-y", "-i", path, "-frames:v", "1", frame_path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            got_frame = os.path.isfile(frame_path)
+            check("a frame extracts cleanly with the bundled ffmpeg",
+                  got_frame, proc.stderr.decode("utf-8", "replace")[-300:])
+            if got_frame:
+                r, g, b = Image.open(frame_path).convert("RGB") \
+                    .getpixel((10, 10))
+                # H.264 4:2:0 chroma subsampling shifts pure green
+                # slightly off (0, 255, 0) on re-decode — this tolerance
+                # is the point of the check, not a bug in the encoder.
+                check("extracted frame's pixel (10, 10) reads as green "
+                      "(R<=24, G>=232, B<=24)",
+                      r <= 24 and g >= 232 and b <= 24,
+                      "got ({0}, {1}, {2})".format(r, g, b))
+        finally:
+            shutil.rmtree(frame_dir, ignore_errors=True)
+    finally:
+        if os.path.isfile(path):
+            os.unlink(path)
 
 
 def check_boot_marker_is_packaged_only():
@@ -1168,6 +1258,8 @@ def main():
     check_countdown_millis_format()
     print()
     check_clock_validation()
+    print()
+    check_green_screen()
     print()
     check_boot_marker_is_packaged_only()
     print()

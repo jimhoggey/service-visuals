@@ -17,7 +17,8 @@
       ],
       "env": {
         "PORT": "8799",
-        "SERVICE_VISUALS_STATS": "0"
+        "SERVICE_VISUALS_STATS": "0",
+        "SERVICE_VISUALS_CONFIG": "/private/tmp/service-visuals-dev-config"
       },
       "port": 8799
     }

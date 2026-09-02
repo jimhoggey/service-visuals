@@ -64,7 +64,9 @@ events lives in [`stats.py`](stats.py).
      Countdown mode too, for a `5:00.000`-style timer. Drop in one or a few
      background images (kept for reuse next time) with adjustable dim and
      blur — with 2+ images the background cycles on a timer you set, a clean
-     cut with no crossfade.
+     cut with no crossfade. Or flip **GREEN SCREEN** for a flat chroma-green
+     frame you key out in your video software, keeping the digits/ring/bar
+     to key back in over your own footage.
    - **Spinner**: one entry per line (2–100), Random or Choose-winner mode,
      accent colour. Try **Test Spin** in the preview. **Fill with AI** can
      top up the wheel — type what you need (e.g. "books of the Bible", "world

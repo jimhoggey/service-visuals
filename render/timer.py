@@ -127,6 +127,12 @@ def _background():
 BG_BLUR_RADIUS = 18      # px, at the full 1920x1080 frame (spec: half that,
                          # 9px, in the JS preview's 960-wide canvas)
 
+# Chroma-key green (docs/specs/green-screen.md) — a flat plate an editor or
+# ProPresenter can key OUT, leaving the digits/ring/bar to key IN over the
+# operator's own footage. Pure #00ff00: any vignette/dim/blur would leave a
+# fringe once keyed, so _plates() below skips all of that for this plate.
+GREEN_SCREEN = (0, 255, 0)
+
 
 def _cover_fit(img, target_w, target_h):
     """Scale `img` so it fills target_w x target_h, crop the overflow,
@@ -194,7 +200,9 @@ def _plates(options, style, accent):
     bg_dim = options.get("bg_dim", 45)
     bg_blur = bool(options.get("bg_blur", False))
 
-    if paths:
+    if options.get("green_screen"):
+        plates = [Image.new("RGB", (WIDTH, HEIGHT), GREEN_SCREEN)]
+    elif paths:
         plates = [prepare_background(p, bg_dim, bg_blur) for p in paths]
     else:
         plates = [_background().copy()]
@@ -684,8 +692,9 @@ def _render_clock(options, progress_cb):
     tag_width = max(tag_font.getlength("AM"), tag_font.getlength("PM"))
 
     out_path = export_path(
-        "clock", "{0:02d}{1:02d}-{2:02d}_{3}s_{4}".format(
-            sh, sm, ss, duration, style))
+        "clock", "{0:02d}{1:02d}-{2:02d}_{3}s_{4}{5}".format(
+            sh, sm, ss, duration, style,
+            "_green" if options.get("green_screen") else ""))
 
     # Same per-second base cache as the countdown's base_for, but keyed on
     # the displayed text/tag rather than remaining seconds — skipped
@@ -837,8 +846,10 @@ def render_timer(options, progress_cb):
         if show_millis else None
 
     out_path = export_path(
-        "timer", "{0}m{1:02d}s_{2}{3}".format(
-            total // 60, total % 60, style, "_ms" if show_millis else ""))
+        "timer", "{0}m{1:02d}s_{2}{3}{4}".format(
+            total // 60, total % 60, style,
+            "_ms" if show_millis else "",
+            "_green" if options.get("green_screen") else ""))
 
     # Digit bases (a plate + digits for one displayed second) are shared by
     # every frame within that second. The cache is small and lock-guarded so

@@ -383,6 +383,14 @@
   // preview never changes. With one, draw the first image (only the first —
   // the preview always shows the opening frame, cycling is video-only).
   function drawTimerBackground(ctx, t) {
+    // Green screen (spec: docs/specs/green-screen.md): a flat chroma plate,
+    // no vignette/dim/blur — the style's track and digits are painted on
+    // top of it exactly as with any other background, by the caller.
+    if (t.greenScreen) {
+      ctx.fillStyle = "#00ff00";
+      ctx.fillRect(0, 0, PW, PH);
+      return;
+    }
     if (!t.backgrounds.length) { paintBackground(ctx); return; }
     var id = t.backgrounds[0];
     var entry = getTimerBgImage(id, t.bgBlur);
@@ -584,14 +592,34 @@
   }
 
   function applyTimerBg() {
+    var green = $("timer-bg-green").getAttribute("aria-pressed") === "true";
     var multi = timerBg.ids.length >= 2;
     var any = timerBg.ids.length >= 1;
-    $("timer-bg-seconds-field").hidden = !multi;
-    $("timer-bg-seconds-hint").hidden = !multi;
+    // Green screen (spec: docs/specs/green-screen.md): the whole image UI
+    // hides while green is on — timerBg.ids itself is untouched, so
+    // turning green back off restores the strip exactly as it was.
+    $("timer-bg-strip").hidden = green;
+    $("timer-bg-add").hidden = green;
+    // The picker's own trigger just went hidden above; if it was left open
+    // from before green was switched on, close it rather than leave an
+    // orphaned panel with no visible way back to it.
+    if (green && !$("timer-bg-picker").hidden) closeTimerBgPicker();
+    $("timer-bg-seconds-field").hidden = green || !multi;
+    $("timer-bg-seconds-hint").hidden = green || !multi;
     timerBgOptional().forEach(function (el) {
-      if (el) el.hidden = !any;
+      if (el) el.hidden = green || !any;
     });
     $("timer-bg-dim-value").textContent = $("timer-bg-dim").value + "%";
+
+    var emptyHint = $("timer-bg-empty");
+    if (green) {
+      emptyHint.hidden = false;
+      emptyHint.textContent = "Solid green — key it out in your " +
+          "video software to put your own background behind the numbers.";
+    } else {
+      emptyHint.hidden = any;
+      emptyHint.textContent = "No images — plain dark background.";
+    }
   }
 
   function validateTimerBg() {
@@ -599,7 +627,13 @@
     // fields — neither has a custom override there (spec: "bg_seconds:
     // _int_field ... label 'Seconds per image'", "bg_dim: _int_field ...
     // label 'Dim'").
-    if (timerBg.ids.length > 10) {
+    //
+    // Green screen (spec: docs/specs/green-screen.md): a stale id count
+    // in the hidden set (kept in memory so turning green off restores it)
+    // must never block a green export — the ids aren't even sent while
+    // green is on (readTimer() forces backgrounds to []).
+    var green = $("timer-bg-green").getAttribute("aria-pressed") === "true";
+    if (!green && timerBg.ids.length > 10) {
       return "A timer can use up to 10 background images.";
     }
     if (timerBg.ids.length >= 2) {
@@ -621,6 +655,11 @@
     var styleEl = document.querySelector('input[name="timer-style"]:checked');
     var modeEl = document.querySelector('input[name="timer-mode"]:checked');
     var formatEl = document.querySelector('input[name="timer-clock-format"]:checked');
+    // Green screen (spec: docs/specs/green-screen.md): read once so
+    // `greenScreen` and `backgrounds` below are both derived from the one
+    // source of truth (the button's aria-pressed) instead of a JS flag
+    // that could drift from the DOM.
+    var green = $("timer-bg-green").getAttribute("aria-pressed") === "true";
     return {
       mode: modeEl ? modeEl.value : "countdown",
       minutes: toInt($("timer-minutes").value, 0),
@@ -637,11 +676,16 @@
       showSeconds: $("timer-clock-show-seconds").checked,
       // Addendum (v1.23.0): one checkbox, one id, used by both modes.
       showMillis: $("timer-show-millis").checked,
+      greenScreen: green,
       // Backgrounds (spec: docs/specs/timer-backgrounds.md): valid in both
       // modes. `backgrounds` comes from JS state (timerBg.ids), not a DOM
       // field — the strip is built dynamically, there is no single input
-      // that holds the set.
-      backgrounds: timerBg.ids.slice(),
+      // that holds the set. Forced to [] under green screen (spec:
+      // docs/specs/green-screen.md) so hasBg (backgrounds.length > 0,
+      // used throughout for the digit-shadow halo) and the export payload
+      // are both right by construction — no separate green-screen case
+      // needed anywhere downstream of this.
+      backgrounds: green ? [] : timerBg.ids.slice(),
       bgSeconds: toInt($("timer-bg-seconds").value, 10),
       bgDim: toInt($("timer-bg-dim").value, 45),
       bgBlur: $("timer-bg-blur").checked
@@ -1124,7 +1168,10 @@
           backgrounds: t.backgrounds,
           bg_seconds: t.bgSeconds,
           bg_dim: t.bgDim,
-          bg_blur: t.bgBlur
+          bg_blur: t.bgBlur,
+          // Green screen (spec: docs/specs/green-screen.md): valid in
+          // both modes, like the rest of the Background group.
+          green_screen: t.greenScreen
         }
       };
     }
@@ -1144,7 +1191,9 @@
         backgrounds: t.backgrounds,
         bg_seconds: t.bgSeconds,
         bg_dim: t.bgDim,
-        bg_blur: t.bgBlur
+        bg_blur: t.bgBlur,
+        // Green screen (spec: docs/specs/green-screen.md).
+        green_screen: t.greenScreen
       }
     };
   }
@@ -2924,6 +2973,15 @@
   $("timer-bg-upload").addEventListener("change", function () {
     var file = this.files && this.files[0];
     if (file) uploadTimerBg(file);
+  });
+  // Green screen (spec: docs/specs/green-screen.md): a plain button click
+  // fires no form input/change event, unlike every other timer-bg-*
+  // control above (all real form fields), so this calls updateTimer()
+  // itself rather than relying on the form-level "change" listener.
+  $("timer-bg-green").addEventListener("click", function () {
+    var pressed = this.getAttribute("aria-pressed") === "true";
+    this.setAttribute("aria-pressed", pressed ? "false" : "true");
+    updateTimer();
   });
   $("timer-form").addEventListener("submit", function (e) {
     e.preventDefault();
