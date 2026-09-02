@@ -271,7 +271,11 @@ def track(name, **props):
             "sessionId": _session(),
             "eventName": name,
             "systemProps": {k: v for k, v in {
-                "isDebug": False,
+                # A source run (SERVICE_VISUALS_STATS=1 while testing a
+                # release) lands under Aptabase's "Debug" toggle, so the
+                # owner's own clicks never mix with real churches' counts.
+                # Only a packaged .app/.exe reports as a release build.
+                "isDebug": not getattr(sys, "frozen", False),
                 "locale": _locale(),
                 "osName": _os_name(),
                 "osVersion": _os_version(),

@@ -849,6 +849,20 @@ def check_stats_privacy():
     check("track() is a no-op until start() has run",
           stats._q.qsize() == before, "queued an event with no worker")
 
+    # A source run must land under Aptabase's Debug toggle so the owner's
+    # release testing never mixes with real churches' counts. Stand in a
+    # fake worker so track() queues without ever starting the sender.
+    stats._state["worker"] = object()
+    try:
+        stats.set_enabled(True)
+        stats.track("crash", error="X")
+        event = stats._q.get_nowait()
+    finally:
+        stats._state["worker"] = None
+    check("a source run reports isDebug=true",
+          event["systemProps"].get("isDebug") is True,
+          "got {0!r}".format(event["systemProps"].get("isDebug")))
+
 
 def check_vision_flip():
     """Apple Vision's bottom-left origin must be flipped, not copied.
