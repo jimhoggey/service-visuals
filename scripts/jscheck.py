@@ -128,13 +128,13 @@ def check_js_modules():
 
     core_file = JS_DIR / "core.js"
     core_text = _strip_noncode(
-        core_file.read_text() if core_file.exists() else "")
+        core_file.read_text(encoding="utf-8") if core_file.exists() else "")
     exported = set(_SV_EXPORT_RE.findall(core_text))
     if not exported:
         problems.append("core.js exports nothing (SV.x = ... not found).")
 
     for f in files:
-        text = _strip_noncode(f.read_text())
+        text = _strip_noncode(f.read_text(encoding="utf-8"))
         local_defs = _local_defs(text)
         sv_reads = set(_SV_READ_RE.findall(text))
 

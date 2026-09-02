@@ -29,6 +29,7 @@ INTRO = "Nice. You're up to date."
 # run longer (92/94/106 chars) because they shipped before that guideline
 # was written down — left as-is rather than reworded after the fact.
 NOTES = {
+    "1.28.1": [],          # Windows build fix — nothing a volunteer would notice
     "1.28.0": [
         "Timer and clock: a GREEN SCREEN toggle under Background gives "
         "you solid green to key out.",
