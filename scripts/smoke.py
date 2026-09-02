@@ -42,6 +42,7 @@ from render import scoreboard  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mock_board  # noqa: E402
+import jscheck  # noqa: E402
 
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 
@@ -331,13 +332,15 @@ def check_backgrounds_blur_route():
 
     BACKGROUNDS_DIR is redirected under _BOARD_TMP by the
     SERVICE_VISUALS_CONFIG override at the top of this file (read once, at
-    app.py's import time), so this never touches the owner's real library.
+    backgrounds.py's import time), so this never touches the owner's real
+    library.
     """
     import io
 
     from PIL import Image, ImageDraw
 
     import app as _app
+    import backgrounds
 
     print("Timer: background blur route (?blur=1)")
 
@@ -385,8 +388,9 @@ def check_backgrounds_blur_route():
     check('blur=0 (anything but "1") behaves exactly like no query at all',
           untouched.data == plain.data, "bytes differ")
 
-    plain_path = os.path.join(_app.BACKGROUNDS_DIR, image_id + ".png")
-    blur_path = os.path.join(_app.BACKGROUNDS_DIR, image_id + ".blur.png")
+    plain_path = os.path.join(backgrounds.BACKGROUNDS_DIR, image_id + ".png")
+    blur_path = os.path.join(
+        backgrounds.BACKGROUNDS_DIR, image_id + ".blur.png")
     check("the blurred variant is cached on disk",
           os.path.isfile(blur_path), blur_path)
 
@@ -521,11 +525,12 @@ def check_countdown_millis_format():
 
 
 def check_clock_validation():
-    """app.validate_timer_options: mode dispatch, clock-only field checks,
-    and proof a countdown payload validates exactly as it did before this
-    feature existed (mode absent, and mode="countdown" explicitly).
+    """validation.validate_timer_options: mode dispatch, clock-only field
+    checks, and proof a countdown payload validates exactly as it did
+    before this feature existed (mode absent, and mode="countdown"
+    explicitly).
     """
-    import app
+    import validation
 
     print("Timer: clock validate_timer_options")
 
@@ -548,30 +553,32 @@ def check_clock_validation():
                 "hold_seconds": 3, "show_millis": False,
                 "backgrounds": [], "bg_seconds": 10, "bg_dim": 45,
                 "bg_blur": False, "green_screen": False}
-    clean = app.validate_timer_options(countdown)
+    clean = validation.validate_timer_options(countdown)
     check("a countdown payload (mode absent) validates unchanged",
           clean == expected, "got {0!r}".format(clean))
-    clean = app.validate_timer_options(dict(countdown, mode="countdown"))
+    clean = validation.validate_timer_options(
+        dict(countdown, mode="countdown"))
     check('mode="countdown" validates the same as mode absent',
           clean == expected, "got {0!r}".format(clean))
 
-    clean = app.validate_timer_options(dict(countdown, show_millis=True))
+    clean = validation.validate_timer_options(
+        dict(countdown, show_millis=True))
     check("show_millis=True is accepted in countdown mode",
           clean.get("show_millis") is True, "got {0!r}".format(clean))
 
     clock = {"mode": "clock", "start": "19:59:50", "duration_seconds": 30,
              "format": "12h", "show_seconds": True, "show_millis": False,
              "style": "classic", "accent": "#e8b44f"}
-    clean = app.validate_timer_options(clock)
+    clean = validation.validate_timer_options(clock)
     check("a well-formed clock payload comes back with mode='clock'",
           clean.get("mode") == "clock" and clean.get("start") == "19:59:50",
           "got {0!r}".format(clean))
 
     def expect_error(label, payload, contains):
         try:
-            app.validate_timer_options(payload)
+            validation.validate_timer_options(payload)
             check(label, False, "no error raised")
-        except app.ValidationError as exc:
+        except validation.ValidationError as exc:
             check(label, contains in str(exc), "got {0!r}".format(str(exc)))
 
     expect_error("a malformed start time is rejected",
@@ -590,12 +597,12 @@ def check_clock_validation():
     # backgrounds.md) — valid, and validated identically, in both modes.
     with_bg = dict(countdown, backgrounds=[], bg_seconds=5, bg_dim=20,
                    bg_blur=True)
-    clean = app.validate_timer_options(with_bg)
+    clean = validation.validate_timer_options(with_bg)
     check("the four background keys are accepted (countdown mode)",
           clean.get("backgrounds") == [] and clean.get("bg_seconds") == 5
           and clean.get("bg_dim") == 20 and clean.get("bg_blur") is True,
           "got {0!r}".format(clean))
-    clean = app.validate_timer_options(
+    clean = validation.validate_timer_options(
         dict(clock, backgrounds=[], bg_seconds=5, bg_dim=20, bg_blur=True))
     check("the four background keys are accepted (clock mode)",
           clean.get("bg_seconds") == 5 and clean.get("bg_dim") == 20
@@ -618,14 +625,14 @@ def check_clock_validation():
     # When true, backgrounds normalises to [] WITHOUT validating the ids
     # sent — a bogus/stale id in a hidden image set must not block a green
     # export.
-    clean = app.validate_timer_options(
+    clean = validation.validate_timer_options(
         dict(countdown, green_screen=True,
              backgrounds=["deadbeefdeadbeef"]))
     check("green_screen=True (countdown): backgrounds -> [] even with a "
           "bogus id",
           clean.get("green_screen") is True
           and clean.get("backgrounds") == [], "got {0!r}".format(clean))
-    clean = app.validate_timer_options(
+    clean = validation.validate_timer_options(
         dict(clock, green_screen=True,
              backgrounds=["deadbeefdeadbeef"]))
     check("green_screen=True (clock): backgrounds -> [] even with a "
@@ -633,7 +640,7 @@ def check_clock_validation():
           clean.get("green_screen") is True
           and clean.get("backgrounds") == [], "got {0!r}".format(clean))
 
-    clean = app.validate_timer_options(countdown)
+    clean = validation.validate_timer_options(countdown)
     check("green_screen omitted defaults to False",
           clean.get("green_screen") is False, "got {0!r}".format(clean))
 
@@ -748,7 +755,7 @@ def check_boot_marker_is_packaged_only():
 
 def check_update_picks_newest_version():
     """The updater must offer the highest VERSION, not the newest upload."""
-    from app import newest_release, _release_version, _version_tuple
+    from routes.update import newest_release, _release_version, _version_tuple
 
     print("Update: newest release is picked by version, not date")
     # A hotfix on an old line published after a newer minor is the whole
@@ -1141,6 +1148,17 @@ def check_scoreboard():
           not os.path.isdir(os.path.join(scoreboard.BOARDS_DIR, board["id"])))
 
 
+def check_js_modules():
+    """static/js/ is seven plain script files sharing one `SV` object, with
+    no bundler to notice a tile calling something it never imported. That
+    fails only at click time, in the packaged app, on a volunteer's
+    machine — so it fails here instead (scripts/jscheck.py)."""
+    print("Static JS module check")
+    problems = jscheck.check_js_modules()
+    check("every static/js file only calls what it defines or imports",
+          not problems, "; ".join(problems))
+
+
 def main():
     rendered = []  # basenames to clean up
 
@@ -1265,6 +1283,9 @@ def main():
     print()
     check_update_picks_newest_version()
     print()
+    check_js_modules()
+    print()
+
     check_stats_privacy()
     print()
     try:

@@ -29,6 +29,12 @@ INTRO = "Nice. You're up to date."
 # run longer (92/94/106 chars) because they shipped before that guideline
 # was written down — left as-is rather than reworded after the fact.
 NOTES = {
+    "1.28.0": [
+        "Timer and clock: a GREEN SCREEN toggle under Background gives "
+        "you solid green to key out.",
+        "Put your own footage behind the numbers in ProPresenter or an "
+        "editor.",
+    ],
     "1.27.1": [],          # a false crash report in our own analytics
     "1.27.0": [
         "Updates always jump straight to the newest version, however far "

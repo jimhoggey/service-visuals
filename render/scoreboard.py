@@ -1441,16 +1441,6 @@ def _reading_order_records(records):
     return _reading_order(records)
 
 
-def rename_board(board_id, name):
-    """Rename a saved board. Returns the updated board."""
-    with _BOARD_LOCK:
-        board = load_board(board_id)
-        board["name"] = _clean_name(name)
-        board["updated"] = _now()
-        _write_board(board)
-        return board
-
-
 def delete_board(board_id):
     """Remove a board and everything harvested from it."""
     directory = _board_dir(board_id)

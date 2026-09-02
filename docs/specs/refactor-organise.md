@@ -1,7 +1,21 @@
 # Spec: Organise the codebase (behaviour-preserving)
 
-**Status:** in progress. **Owner:** orchestrator. **Implementers:** Sonnet
+**Status:** shipped in v1.28.0. **Owner:** orchestrator. **Implementers:** Sonnet
 agents with disjoint file ownership; one reviewer.
+
+**Learned in verification.** (1) The AST/regex body proof, the route-set
+proof and `jscheck` all passed while five buttons were dead: the JS split
+dropped the update-banner/footer wiring block (it was loose code in the
+tail, not a function, so no proof looked at it). Only clicking the
+buttons in a browser and watching the network log found it — keep doing
+that. (2) The clock preview ticks live, so its canvas hash is never
+stable; compare canvases old-vs-new under identical click sequences in
+the same tab, not against a hash from an earlier session. (3) An agent
+ran `git stash` mid-task, reverting every other agent's in-flight edits;
+"do not stash, reset or checkout" now belongs in every implementer brief.
+(4) `validation` ↔ `backgrounds` briefly imported each other by relying
+on definition order; `_background_id_field` moved to `validation.py` so
+the graph is a DAG again.
 
 ## Why
 

@@ -42,6 +42,8 @@ PORT=8799 SERVICE_VISUALS_STATS=0 .venv/bin/python app.py   # dev server
   can be, so it runs on Linux CI.
 - Always set `SERVICE_VISUALS_STATS=0` outside a real release so test runs don't
   land in the owner's analytics.
+- `SERVICE_VISUALS_STATS=0 .venv/bin/python scripts/golden.py --check` must
+  also pass after any change to a renderer, or any refactor.
 - `.venv/bin/python` — the project venv, Python 3.9.
 
 ## Conventions

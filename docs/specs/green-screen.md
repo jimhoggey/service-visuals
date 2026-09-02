@@ -1,6 +1,6 @@
 # Spec: Green screen background for the Timer tile
 
-**Status:** in progress. **Owner:** orchestrator. **Implementers:** backend
+**Status:** shipped in v1.28.0. **Owner:** orchestrator. **Implementers:** backend
 Sonnet agent, frontend Sonnet agent (disjoint files, below).
 
 ## Why
