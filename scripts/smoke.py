@@ -709,6 +709,113 @@ def check_green_screen():
             os.unlink(path)
 
 
+def check_qr_styles():
+    """docs/specs/qr-styles.md: style validation, plus one pixel check per
+    non-card style proving the plate/dots actually differ from `card` in
+    the rendered frame. A still (render_qr_still) is the same composition
+    the video encodes, so this covers the visual contract without a
+    render+ffmpeg round trip — `card`'s own video path is unchanged and
+    stays covered by verify() in main().
+    """
+    import validation
+    from render.qr import (WIDTH, _build_card, _clean_options,
+                            _dots_square_mask, _layout, _module_px,
+                            _qr_matrix, render_qr_still)
+
+    print("QR: style validation + per-style pixel checks")
+
+    base = {"url": "https://example.org", "heading": "GIVE",
+            "caption": "Thanks"}
+
+    clean = validation.validate_qr_options(base)
+    check("style absent defaults to card",
+          clean.get("style") == "card", "got {0!r}".format(clean))
+
+    for style in ("light", "dots"):
+        clean = validation.validate_qr_options(dict(base, style=style))
+        check("style={0!r} is accepted".format(style),
+              clean.get("style") == style, "got {0!r}".format(clean))
+
+    try:
+        validation.validate_qr_options(dict(base, style="neon"))
+        check('style="neon" is rejected', False, "no error raised")
+    except validation.ValidationError as exc:
+        check('style="neon" is rejected with the exact message',
+              str(exc) == "That QR style is not valid.",
+              "got {0!r}".format(str(exc)))
+
+    # (b) `light` is a light plate, `card` the dark vignette — pixel
+    # (5, 5) sits on the background corner, far from the centered card,
+    # for either style.
+    card_frame = render_qr_still(
+        _clean_options(dict(base, style="card")), max_width=900)
+    r, g, b = card_frame.getpixel((5, 5))
+    check("card: pixel (5, 5) is dark (every channel <= 40)",
+          r <= 40 and g <= 40 and b <= 40,
+          "got ({0}, {1}, {2})".format(r, g, b))
+
+    light_frame = render_qr_still(
+        _clean_options(dict(base, style="light")), max_width=900)
+    r, g, b = light_frame.getpixel((5, 5))
+    check("light: pixel (5, 5) is light (every channel >= 200)",
+          r >= 200 and g >= 200 and b >= 200,
+          "got ({0}, {1}, {2})".format(r, g, b))
+
+    # (c) `dots`: a dark module that is neither finder nor alignment
+    # pattern renders as a filled circle — centre dark, corner (outside
+    # the inscribed circle) light. Geometry comes from the renderer's own
+    # helpers (module_px, card layout), never a hard-coded pixel offset,
+    # so this keeps working if sizing constants ever change.
+    dots_opts = _clean_options(dict(base, style="dots"))
+    matrix, n, qr = _qr_matrix(dots_opts["url"])
+    module_px = _module_px(n)
+    square = _dots_square_mask(qr, n)
+
+    cell = None
+    if matrix[9][9] and not square[9][9]:
+        cell = (9, 9)
+    else:
+        for rr in range(n):
+            for cc in range(n):
+                if matrix[rr][cc] and not square[rr][cc]:
+                    cell = (rr, cc)
+                    break
+            if cell:
+                break
+    check("a dark, non-finder/alignment cell exists to sample",
+          cell is not None, "matrix has none (n={0})".format(n))
+
+    if cell is not None:
+        r_i, c_i = cell
+        card_img, card_size = _build_card(matrix, n, "dots", qr)
+        geo = _layout(dots_opts, card_size)
+        code_px = module_px * n
+        origin = (card_size - code_px) // 2
+        card_left = geo["card_cx"] - card_size // 2
+        card_top = geo["card_top"]
+
+        x0 = card_left + origin + c_i * module_px
+        y0 = card_top + origin + r_i * module_px
+        cx = x0 + module_px // 2
+        cy = y0 + module_px // 2
+
+        # render_qr_still scales the 1920-wide frame down to max_width —
+        # scale the sample points the same way rather than re-rendering
+        # at full size.
+        ratio = 900.0 / WIDTH
+        dots_frame = render_qr_still(dots_opts, max_width=900)
+        center_px = dots_frame.getpixel(
+            (int(round(cx * ratio)), int(round(cy * ratio))))
+        corner_px = dots_frame.getpixel(
+            (int(round(x0 * ratio)), int(round(y0 * ratio))))
+        check("dots: sampled cell's centre pixel is dark",
+              all(ch <= 40 for ch in center_px[:3]),
+              "got {0!r}".format(center_px))
+        check("dots: sampled cell's top-left corner pixel is light",
+              all(ch >= 200 for ch in corner_px[:3]),
+              "got {0!r}".format(corner_px))
+
+
 def check_boot_marker_is_packaged_only():
     """A source run must not touch the installed app's boot marker.
 
@@ -1010,6 +1117,8 @@ def check_stats_privacy():
           _app._spinner_props({"mode": "../etc/passwd"}) == {"mode": "random"})
     check("motionbg props clamp",
           _app._motionbg_props({"style": "secret"}) == {"style": "aurora"})
+    check("qr props clamp",
+          _app._qr_props({"style": "neon"}) == {"style": "card"})
 
     # Never sends when not asked to: no worker, no queue growth.
     before = stats._q.qsize()
@@ -1330,6 +1439,45 @@ def check_scoreboard():
           not os.path.isdir(os.path.join(scoreboard.BOARDS_DIR, board["id"])))
 
 
+def check_download_retry_and_remove():
+    """YouTube's intermittent bot check must be recognised (it was read
+    as "private" in v1.29.1) and retried; REMOVE must leave nothing in
+    bin/. Offline: fake binaries, no network."""
+    import downloader
+    import tools
+    print("Download: bot check + REMOVE")
+    bot = ("ERROR: [youtube] S9IJ1GgAAxE: Sign in to confirm you’re "
+           "not a bot. Use --cookies-from-browser or --cookies")
+    check("the bot check is recognised", downloader.is_bot_check(bot))
+    check("a private video is not a bot check",
+          not downloader.is_bot_check("ERROR: Private video. Sign in"))
+    check("the bot check gets its own message",
+          "robot" in downloader.friendly_error(bot))
+    check("a private video keeps the private message",
+          "private" in downloader.friendly_error("ERROR: Private video"))
+    delays = downloader.BOT_CHECK_DELAYS
+    check("retry pauses are short (under 90 s in total)",
+          all(d > 0 for d in delays) and sum(delays) <= 90,
+          "got {0!r}".format(delays))
+
+    os.makedirs(tools.BIN_DIR, exist_ok=True)
+    ytdlp_path, deno_path = tools.binary_paths()
+    fakes = [ytdlp_path, deno_path, tools.STAMP_PATH, tools.VERSION_PATH,
+             os.path.join(tools.BIN_DIR, "deno.zip.part")]
+    for path in fakes:
+        with open(path, "wb") as fh:
+            fh.write(b"x")
+    check("status reads ready with the fake binary present",
+          tools.tools_status()["ready"])
+    result = tools.remove_tools()
+    check("remove_tools reports ok", result.get("ok") is True,
+          "got {0!r}".format(result))
+    check("remove_tools leaves nothing behind",
+          not any(os.path.exists(p) for p in fakes))
+    check("status reads not ready afterwards",
+          not tools.tools_status()["ready"])
+
+
 def check_https_goes_through_netutil():
     """Every outbound HTTPS call must use netutil.urlopen. A frozen build has
     no CA bundle on disk, so a plain urllib.request.urlopen verifies against
@@ -1485,11 +1633,16 @@ def main():
     print()
     check_green_screen()
     print()
+    check_qr_styles()
+    print()
     check_boot_marker_is_packaged_only()
     print()
     check_update_picks_newest_version()
     print()
     check_download()
+    print()
+
+    check_download_retry_and_remove()
     print()
     check_js_modules()
     print()

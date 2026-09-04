@@ -604,6 +604,25 @@
           </fieldset>
 
           <fieldset class="group">
+            <legend>Style</legend>
+            <div class="seg-group">
+              <label class="seg">
+                <input class="vh" type="radio" name="qr-style" id="qr-style-card" value="card" checked>
+                <span>CARD</span>
+              </label>
+              <label class="seg">
+                <input class="vh" type="radio" name="qr-style" id="qr-style-light" value="light">
+                <span>LIGHT</span>
+              </label>
+              <label class="seg">
+                <input class="vh" type="radio" name="qr-style" id="qr-style-dots" value="dots">
+                <span>DOTS</span>
+              </label>
+            </div>
+            <p class="hint">Card and dots sit on your background; light fills the whole screen.</p>
+          </fieldset>
+
+          <fieldset class="group">
             <legend>Text</legend>
             <div class="num-field num-field-wide">
               <label for="qr-heading">HEADING (OPTIONAL)</label>
@@ -664,7 +683,7 @@
             <input type="hidden" id="qr-position" value="center">
           </fieldset>
 
-          <fieldset class="group">
+          <fieldset class="group" id="qr-bg-group">
             <legend>Background image (optional)</legend>
             <div class="bg-row">
               <label class="btn btn-file" for="qr-bg-file">CHOOSE IMAGE&#8230;</label>
@@ -968,7 +987,10 @@
           <p class="hint">MP4 is H.264 up to 1080p, ready for ProPresenter.</p>
         </fieldset>
 
-        <p class="hint" id="download-tools">Checking the downloader&#8230;</p>
+        <div class="tools-row">
+          <p class="hint" id="download-tools">Checking the downloader&#8230;</p>
+          <button type="button" class="btn btn-file" id="download-tools-remove" hidden>REMOVE</button>
+        </div>
 
         <div class="export-row">
           <button class="btn-export" id="download-export" type="submit">DOWNLOAD</button>

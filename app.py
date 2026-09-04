@@ -31,9 +31,9 @@ from render.timer import render_timer
 from render.spinner import render_spinner
 from render.qr import render_qr, render_qr_image, render_qr_still
 from render.motionbg import render_motion_bg
-from validation import (DOWNLOAD_FORMATS, MOTIONBG_STYLES, SPINNER_MODES,
-                        TIMER_STYLES, VALIDATORS, ValidationError, _one_of,
-                        validate_qr_options)
+from validation import (DOWNLOAD_FORMATS, MOTIONBG_STYLES, QR_STYLES,
+                        SPINNER_MODES, TIMER_STYLES, VALIDATORS,
+                        ValidationError, _one_of, validate_qr_options)
 from webutil import MAX_UPLOAD_BYTES, json_body
 
 # When frozen by PyInstaller the static files live under the unpack dir.
@@ -132,6 +132,10 @@ def _motionbg_props(options):
                              MOTIONBG_STYLES, "aurora")}
 
 
+def _qr_props(options):
+    return {"style": _one_of(options.get("style"), QR_STYLES, "card")}
+
+
 def _download_props(options):
     return {"format": _one_of(options.get("format"), DOWNLOAD_FORMATS,
                               "mp4")}
@@ -140,7 +144,7 @@ def _download_props(options):
 jobs = JobManager({"timer": _counted("timer", render_timer, _timer_props),
                    "spinner": _counted("spinner", render_spinner,
                                        _spinner_props),
-                   "qr": _counted("qr", render_qr),
+                   "qr": _counted("qr", render_qr, _qr_props),
                    "motionbg": _counted("motionbg", render_motion_bg,
                                         _motionbg_props),
                    "download": _counted("download", download_video,

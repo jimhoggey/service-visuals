@@ -15,6 +15,17 @@ lifecycle's `RENDERING` label was wrong for a download; tiles may now
 supply `busyText(job)` and a `done(filename)` hook. (4) `jscheck.py`'s
 comment stripper truncated a line at a `//` inside a string (the URL in
 the validation message); it now scans strings and comments in one pass.
+(5) **v1.29.1:** `tools.py` fetched with `urllib.request.urlopen`
+directly; a frozen build has no CA bundle, so the packaged app failed with
+"Couldn't reach GitHub" while source worked. Every outbound call goes
+through `netutil.urlopen`; smoke now refuses any direct `urlopen`.
+(6) **v1.30.0:** YouTube's "Sign in to confirm you're not a bot" is
+intermittent — the identical request failed twice in three minutes and
+succeeded ten minutes later — and v1.29.1 mapped it to "private".
+`downloader.is_bot_check` now retries after 15 s and 45 s, and the
+message says what it is. Cookies / PO-token providers were considered
+and rejected for volunteers (keychain prompts, account risk). A REMOVE
+button (`DELETE /api/download/tools`) deletes the fetched binaries.
 
 ## Why
 

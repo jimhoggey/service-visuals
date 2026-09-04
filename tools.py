@@ -345,6 +345,30 @@ def tools_status():
     return {"ready": ready, "ytdlp_version": version}
 
 
+def remove_tools():
+    """Delete the fetched binaries and their bookkeeping — the REMOVE
+    button. Only ever touches files inside BIN_DIR; the next download
+    simply sets up again. Never raises: a file that would not delete is
+    reported, not thrown."""
+    ytdlp_path, deno_path = binary_paths()
+    failed = []
+    for path in (ytdlp_path, deno_path, STAMP_PATH, VERSION_PATH):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            failed.append(os.path.basename(path))
+            log_line("remove_tools: {0}: {1!r}".format(path, exc))
+    try:
+        for name in os.listdir(BIN_DIR):
+            if name.endswith(".part"):
+                os.unlink(os.path.join(BIN_DIR, name))
+    except OSError:
+        pass
+    return {"ok": not failed, "kept": failed}
+
+
 def log_line(text):
     """Append one timestamped line to download.log — local only, never
     sent to analytics (see downloader.py's error handling and

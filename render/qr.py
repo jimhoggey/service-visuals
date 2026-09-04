@@ -18,6 +18,11 @@ Scannability rules (non-negotiable — a code that won't scan is useless):
 - Modules are crisp filled squares on exact integer boundaries (no
   anti-aliasing, no dark-module "dot gain" from overlapping rectangles).
 - The accent colour touches ONLY the heading text and the breathing ring.
+- Three `style`s share all of the above (docs/specs/qr-styles.md): `card`
+  (default, this docstring's description), `light` (an off-white plate,
+  no card, dark-on-light text) and `dots` (the card, but data modules are
+  filled circles — finder/alignment modules stay square so scanners can
+  still locate the code). Never light-on-dark, in any style.
 
 Position: the whole heading+card+caption block can be anchored to a 3x3 grid
 (top-left ... bottom-right, default center), so the code can sit out of the
@@ -36,6 +41,7 @@ import os
 import re
 
 import segno
+from segno import consts as _segno_consts
 from PIL import Image, ImageDraw
 
 from . import fonts
@@ -55,6 +61,13 @@ TEXT_LIGHT = "#f2f0eb"
 CARD_WHITE = "#ffffff"
 QR_DARK = "#0a0c0e"
 DEFAULT_ACCENT = "#e8b44f"
+
+# `light` style: an off-white plate instead of the dark vignette (docs/specs/
+# qr-styles.md). QR_DARK doubles as the plate's text colour — gold-on-white
+# would be unreadable, and dark-on-light keeps the style's own contrast rule.
+LIGHT_BASE = "#f4f2ee"
+LIGHT_EDGE = "#e6e3dc"
+LIGHT_CAPTION_ALPHA = 199        # ~78% — caption reads quieter than heading
 
 # ---------------------------------------------------------------- QR sizing
 
@@ -103,6 +116,12 @@ POSITIONS = (
 )
 DEFAULT_POSITION = "center"
 
+# Three dark-on-light looks (docs/specs/qr-styles.md) — never light-on-dark,
+# which fails on older scanners. "card" is the original look and must stay
+# the default so an old caller that never heard of `style` is unaffected.
+QR_STYLES = ("card", "light", "dots")
+DEFAULT_STYLE = "card"
+
 
 # ---------------------------------------------------------------- helpers
 
@@ -146,6 +165,10 @@ def _clean_options(options):
     if position not in POSITIONS:
         position = DEFAULT_POSITION
 
+    style = options.get("style", DEFAULT_STYLE)
+    if style not in QR_STYLES:
+        style = DEFAULT_STYLE
+
     background = _resolve_background(options.get("background"))
 
     try:
@@ -156,16 +179,18 @@ def _clean_options(options):
 
     return {
         "url": url, "heading": heading, "caption": caption,
-        "accent": str(accent), "position": position,
+        "accent": str(accent), "position": position, "style": style,
         "background": background, "duration": duration,
     }
 
 
-def _vignette_background():
-    """1920x1080 RGB: BG_BASE with a radial vignette to BG_EDGE at edges."""
+def _vignette_background(base_hex=BG_BASE, edge_hex=BG_EDGE):
+    """1920x1080 RGB: `base_hex` with a radial vignette to `edge_hex` at the
+    edges. Defaults to the dark card backdrop; `light` style reuses this
+    with LIGHT_BASE/LIGHT_EDGE instead of duplicating the mask code."""
     small_w, small_h = 240, 135
-    base = _hex_rgb(BG_BASE)
-    edge = _hex_rgb(BG_EDGE)
+    base = _hex_rgb(base_hex)
+    edge = _hex_rgb(edge_hex)
     img = Image.new("RGB", (small_w, small_h))
     px = img.load()
     cx = (small_w - 1) / 2.0
@@ -201,16 +226,39 @@ def _image_background(path):
     return Image.blend(img, scrim, 0.48)
 
 
-def _build_background(background):
+def _build_background(background, style):
+    # `light` is a plain light plate for the code to sit on — an uploaded
+    # photo behind it would risk an unscannable, low-contrast quiet zone,
+    # so this style ignores `background` entirely (docs/specs/qr-styles.md).
+    if style == "light":
+        return _vignette_background(LIGHT_BASE, LIGHT_EDGE)
     return _image_background(background) if background \
         else _vignette_background()
 
 
 def _qr_matrix(url):
-    """segno matrix as a list of rows of ints (0/1); n = side length."""
+    """segno matrix as a list of rows of ints (0/1); n = side length, plus
+    the segno QRCode itself (dots style reads module types off it)."""
     qr = segno.make(url, error=QR_ERROR)
     matrix = [list(row) for row in qr.matrix]
-    return matrix, len(matrix)
+    return matrix, len(matrix), qr
+
+
+def _dots_square_mask(qr, n):
+    """n x n bools: True where a dark module belongs to a finder or
+    alignment pattern, which must stay a solid square so a scanner can
+    still locate the code once other data modules become dots.
+
+    matrix_iter(border=0, verbose=True) yields the same n x n grid as
+    qr.matrix (checked against a live QRCode: 0 mismatches across every
+    module, dark bit vs "is a *_DARK type"), each cell tagged with its
+    structural role — this segno version (1.6.6) does expose that verbose
+    form, so we use it instead of computing finder squares from position.
+    """
+    types = list(qr.matrix_iter(scale=1, border=0, verbose=True))
+    square = (_segno_consts.TYPE_FINDER_PATTERN_DARK,
+              _segno_consts.TYPE_ALIGNMENT_PATTERN_DARK)
+    return [[types[r][c] in square for c in range(n)] for r in range(n)]
 
 
 def _module_px(n):
@@ -221,9 +269,17 @@ def _module_px(n):
     return max(MODULE_MIN, min(MODULE_TARGET, int(fit)))
 
 
-def _build_card(matrix, n):
-    """White rounded card (RGBA) with the QR drawn crisp and centered.
-    Returns (card_image, card_size)."""
+def _build_card(matrix, n, style, qr):
+    """Card (RGBA) with the QR drawn crisp and centered. Returns
+    (card_image, card_size).
+
+    `card` (unchanged from before this feature) and `dots` get a white
+    rounded card; `light` skips that fill and stays transparent so the
+    plate built by `_build_background` shows through — the quiet zone
+    ends up plate-coloured, which is fine, since the plate is light.
+    `dots` draws each data module as a filled circle; finder and
+    alignment modules stay square (see `_dots_square_mask`).
+    """
     module_px = _module_px(n)
     code_px = module_px * n
     inner = code_px + 2 * QUIET * module_px    # code + quiet zone
@@ -231,12 +287,14 @@ def _build_card(matrix, n):
 
     card = Image.new("RGBA", (card_size, card_size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(card)
-    draw.rounded_rectangle(
-        [0, 0, card_size - 1, card_size - 1], radius=CARD_RADIUS,
-        fill=_hex_rgb(CARD_WHITE) + (255,))
+    if style != "light":
+        draw.rounded_rectangle(
+            [0, 0, card_size - 1, card_size - 1], radius=CARD_RADIUS,
+            fill=_hex_rgb(CARD_WHITE) + (255,))
 
     origin = (card_size - code_px) // 2        # exact-centered code block
     dark = _hex_rgb(QR_DARK)
+    square_mask = _dots_square_mask(qr, n) if style == "dots" else None
     for r in range(n):
         y0 = origin + r * module_px
         for c in range(n):
@@ -245,8 +303,11 @@ def _build_card(matrix, n):
                 # Exact cell: [x0 .. x0+module_px-1] fills module_px pixels with
                 # no overlap into the next cell, so dark and light modules are
                 # the same size (no dot gain that would fail a marginal scan).
-                draw.rectangle(
-                    [x0, y0, x0 + module_px - 1, y0 + module_px - 1], fill=dark)
+                box = [x0, y0, x0 + module_px - 1, y0 + module_px - 1]
+                if style == "dots" and not square_mask[r][c]:
+                    draw.ellipse(box, fill=dark)
+                else:
+                    draw.rectangle(box, fill=dark)
     return card, card_size
 
 
@@ -330,22 +391,33 @@ def _layout(opts, card_size):
 
 def _compose_base(opts):
     """Build the static base frame (RGB) and return (base_rgb, geometry)."""
-    matrix, n = _qr_matrix(opts["url"])
-    card, card_size = _build_card(matrix, n)
+    style = opts["style"]
+    matrix, n, qr = _qr_matrix(opts["url"])
+    card, card_size = _build_card(matrix, n, style, qr)
     geo = _layout(opts, card_size)
 
-    base = _build_background(opts["background"]).convert("RGBA")
+    base = _build_background(opts["background"], style).convert("RGBA")
     draw = ImageDraw.Draw(base)
     accent = opts["accent"]
+
+    # `light` sits on a light plate: gold-on-white would be unreadable, so
+    # both heading and caption switch to QR_DARK (caption stays quieter via
+    # alpha, same as TEXT_LIGHT-on-dark does for the other two styles).
+    if style == "light":
+        heading_fill = _hex_rgb(QR_DARK) + (255,)
+        caption_fill = _hex_rgb(QR_DARK) + (LIGHT_CAPTION_ALPHA,)
+    else:
+        heading_fill = _hex_rgb(accent) + (255,)
+        caption_fill = _hex_rgb(TEXT_LIGHT) + (255,)
 
     if geo["heading_font"] is not None:
         _draw_tracked_text(
             draw, geo["card_cx"], geo["heading_top"], geo["heading"],
-            geo["heading_font"], _hex_rgb(accent) + (255,), HEADING_TRACKING)
+            geo["heading_font"], heading_fill, HEADING_TRACKING)
     if geo["caption_font"] is not None:
         _draw_tracked_text(
             draw, geo["card_cx"], geo["caption_top"], geo["caption"],
-            geo["caption_font"], _hex_rgb(TEXT_LIGHT) + (255,), 0)
+            geo["caption_font"], caption_fill, 0)
 
     base.alpha_composite(card, (geo["card_cx"] - card_size // 2,
                                 geo["card_top"]))

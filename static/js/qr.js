@@ -24,6 +24,7 @@
   var qrPreviewSeq = 0;                  // guards against out-of-order previews
 
   function readQr() {
+    var styleEl = document.querySelector('input[name="qr-style"]:checked');
     return {
       url: $("qr-url").value.trim(),
       heading: $("qr-heading").value.trim(),
@@ -31,7 +32,8 @@
       accent: currentAccent("qr"),
       duration: toInt($("qr-duration").value, 15),
       position: $("qr-position").value || "center",
-      background: qrBackground
+      background: qrBackground,
+      style: styleEl ? styleEl.value : "card"
     };
   }
 
@@ -57,7 +59,8 @@
         accent: q.accent,
         duration_seconds: q.duration,
         position: q.position,
-        background: q.background
+        background: q.background,
+        style: q.style
       }
     };
   }
@@ -100,7 +103,20 @@
     qrPreviewTimer = setTimeout(fetchQrPreview, 350);
   }
 
+  // LIGHT is a plain plate with no room for a background image (the spec
+  // says it ignores one even if uploaded), so the upload group is only
+  // useful for CARD/DOTS. Runs on every updateQr() call so it always
+  // reflects the live style radio — same pattern as the timer's
+  // applyTimerMode().
+  function applyQrStyle() {
+    var styleEl = document.querySelector('input[name="qr-style"]:checked');
+    var style = styleEl ? styleEl.value : "card";
+    $("qr-bg-group").hidden = style === "light";
+    return style;
+  }
+
   function updateQr() {
+    applyQrStyle();
     var err = validateQr();
     $("qr-export").disabled = exportBusy["qr"] || (!!err);
     $("qr-export-png").disabled = exportBusy["qr"] || (!!err);

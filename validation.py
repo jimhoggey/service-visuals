@@ -12,7 +12,7 @@ import re
 from urllib.parse import urlsplit
 
 from render.encoder import UPLOADS_DIR
-from render.qr import POSITIONS
+from render.qr import POSITIONS, QR_STYLES
 from render.timer import CLOCK_STYLES
 from backgrounds import (
     BACKGROUNDS_DIR, BACKGROUND_ID_RE, BACKGROUNDS_PER_TIMER_MAX)
@@ -395,6 +395,10 @@ def validate_qr_options(options):
     if not isinstance(position, str) or position not in POSITIONS:
         raise ValidationError("That QR position is not valid.")
 
+    style = options.get("style", "card")
+    if not isinstance(style, str) or style not in QR_STYLES:
+        raise ValidationError("That QR style is not valid.")
+
     return {
         "url": url,
         "heading": heading,
@@ -402,6 +406,7 @@ def validate_qr_options(options):
         "accent": _accent_field(options),
         "duration_seconds": duration,
         "position": position,
+        "style": style,
         "background": _background_field(options),
     }
 

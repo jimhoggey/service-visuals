@@ -79,6 +79,8 @@
       })
       .then(function (j) {
         toolsReady = !!(j && j.ready);
+        // REMOVE only makes sense once there is something to remove.
+        $("download-tools-remove").hidden = !toolsReady;
         if (toolsReady) {
           // The version is recorded after a download's update check, so
           // it can be unknown on a fresh setup — say "ready" without it.
@@ -114,6 +116,19 @@
     // downloader is ready, not still promise a one-time setup.
     done: function () { fetchDownloadStatus(); }
   };
+  // The two fetched binaries are ~120 MB on disk; a church that tried the
+  // tile once can hand that back here instead of hunting for the folder.
+  $("download-tools-remove").addEventListener("click", function () {
+    if (exportBusy["download"]) return;   // not mid-download
+    $("download-tools-remove").disabled = true;
+    fetch("/api/download/tools", { method: "DELETE" })
+      .catch(function () {})
+      .then(function () {
+        $("download-tools-remove").disabled = false;
+        fetchDownloadStatus();
+      });
+  });
+
   SV.wireTileForm("download", downloadTile, { autoUpdate: true });
   SV.registerTile("download", downloadTile);
 

@@ -77,11 +77,14 @@ events lives in [`stats.py`](stats.py).
      which auto-picks a working free model).
    - **QR card**: a "scan to…" code from any website or plain text, with an
      optional heading and caption, accent colour, a 9-way on-screen position,
-     and an optional background image. The preview shows the real, scannable
-     code (hit **Refresh** to regenerate) — perfect for giving, connect cards
-     and signups. Export it as a clip (**EXPORT MP4**) or, since nothing in it
-     moves, as a still **EXPORT PNG** — instant, and usually the simpler thing
-     to drop into ProPresenter.
+     and an optional background image, in a choice of three styles — Card
+     (a white card on your background), Light (a full-screen off-white
+     plate) or Dots (the card, with circular data modules). The preview
+     shows the real, scannable code (hit **Refresh** to regenerate) —
+     perfect for giving, connect cards and signups. Export it as a clip
+     (**EXPORT MP4**) or, since nothing in it moves, as a still
+     **EXPORT PNG** — instant, and usually the simpler thing to drop into
+     ProPresenter.
    - **Motion background**: a seamlessly-looping ambient background in your
      accent colour — Aurora, Bokeh or Waves — for worship and ambient moments.
    - **YouTube download**: paste a YouTube link and get an MP4 (H.264, up to

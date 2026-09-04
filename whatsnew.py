@@ -29,6 +29,14 @@ INTRO = "Nice. You're up to date."
 # run longer (92/94/106 chars) because they shipped before that guideline
 # was written down — left as-is rather than reworded after the fact.
 NOTES = {
+    "1.30.0": [
+        "QR card: three styles — CARD, LIGHT (a bright full-screen "
+        "slide) and DOTS (rounded modules). Click through them.",
+        "YouTube download: when YouTube asks the computer to prove it "
+        "isn't a robot, the app now waits and retries by itself.",
+        "YouTube download: a REMOVE button beside the status line "
+        "deletes the downloader's files (about 120 MB) if you don't need it.",
+    ],
     "1.29.1": [
         "Fixed: the YouTube downloader's one-time setup failed with "
         "\"Couldn't reach GitHub\" in the installed app.",

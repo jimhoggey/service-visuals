@@ -367,6 +367,15 @@ button.tile:active { transform: translateY(0); }
    pasted URL needs, instead of the 410px config column. */
 .form-solo { max-width: 640px; }
 
+/* Status line + REMOVE side by side on the download tile. */
+.tools-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.tools-row .hint { margin: 0; }
+
 /* The one field on the download tile IS the tile: bigger than the rest. */
 .url-input {
   border-radius: 10px;

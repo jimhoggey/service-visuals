@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 
 import imageio_ffmpeg
 
@@ -51,6 +52,21 @@ def parse_progress(line):
         return None
 
 
+def is_bot_check(stderr):
+    """YouTube's intermittent "prove you're not a bot" refusal. Seen on
+    the owner's home network twice in three minutes and gone ten minutes
+    later with the identical request, so it is worth a pause and a retry
+    before it becomes the operator's problem."""
+    text = (stderr or "").lower()
+    return "not a bot" in text or "confirm you" in text
+
+
+# Pauses before each retry of a bot-checked download. Two retries, ~1 min
+# total: enough to outlast the short-lived flag without leaving a
+# volunteer staring at a stalled bar during a service.
+BOT_CHECK_DELAYS = (15, 45)
+
+
 def friendly_error(stderr):
     """Map yt-dlp's stderr onto one of a few plain-English sentences.
 
@@ -60,6 +76,12 @@ def friendly_error(stderr):
     daily (tools.update_ytdlp), so an exact match would go stale fast.
     """
     text = (stderr or "").lower()
+    if is_bot_check(text):
+        # Checked before "sign in": YouTube's wording is "Sign in to
+        # confirm you're not a bot", and v1.29.1 read that as "private".
+        return ("YouTube is asking this computer to prove it isn't a "
+                "robot, so it refused the download. That is temporary — "
+                "wait a few minutes and try again.")
     if "private video" in text or "sign in" in text:
         return ("That video is private or needs a sign-in, so it can't "
                 "be downloaded.")
@@ -122,6 +144,29 @@ def download_video(options, progress_cb):
     args = _build_args(ytdlp_path, url, fmt, deno_path, ffmpeg_path)
 
     os.makedirs(EXPORTS_DIR, exist_ok=True)
+
+    # A bot-checked attempt is retried after a pause (BOT_CHECK_DELAYS);
+    # any other failure is final on the first try.
+    for delay in (0,) + BOT_CHECK_DELAYS:
+        if delay:
+            tools.log_line("bot check — retrying in {0}s".format(delay))
+            time.sleep(delay)
+        code, result_path, stderr_text = _run_once(
+            args, needs_fetch, progress_cb)
+        if code == 0 and result_path is not None:
+            progress_cb(100)
+            return os.path.basename(result_path)
+        if not is_bot_check(stderr_text):
+            break
+
+    tools.log_line(
+        "download failed (exit {0}):\n{1}".format(code, stderr_text))
+    raise DownloadError(friendly_error(stderr_text))
+
+
+def _run_once(args, needs_fetch, progress_cb):
+    """One yt-dlp run. Returns (exit code, result path or None, stderr
+    tail) — the caller decides whether a failure is worth retrying."""
     proc = subprocess.Popen(
         args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, bufsize=1)
@@ -168,12 +213,4 @@ def download_video(options, progress_cb):
                 and os.path.isfile(candidate)):
             result_path = candidate
             break
-
-    if proc.returncode != 0 or result_path is None:
-        tools.log_line(
-            "download failed (exit {0}):\n{1}".format(
-                proc.returncode, stderr_text))
-        raise DownloadError(friendly_error(stderr_text))
-
-    progress_cb(100)
-    return os.path.basename(result_path)
+    return proc.returncode, result_path, stderr_text
