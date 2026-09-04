@@ -1330,6 +1330,30 @@ def check_scoreboard():
           not os.path.isdir(os.path.join(scoreboard.BOARDS_DIR, board["id"])))
 
 
+def check_https_goes_through_netutil():
+    """Every outbound HTTPS call must use netutil.urlopen. A frozen build has
+    no CA bundle on disk, so a plain urllib.request.urlopen verifies against
+    nothing and fails with URLError — from source it works, so nobody
+    notices until a church does. It broke the update check once and the
+    YouTube downloader's first-run setup in v1.29.0 (docs/specs/
+    youtube-download.md); this check is the third time's charm."""
+    print("Network: outbound HTTPS goes through netutil")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    offenders = []
+    for folder in ("", "routes", "render"):
+        base = os.path.join(root, folder)
+        for name in sorted(os.listdir(base)):
+            if not name.endswith(".py") or name == "netutil.py":
+                continue
+            with open(os.path.join(base, name), encoding="utf-8") as fh:
+                for lineno, line in enumerate(fh, 1):
+                    if "urllib.request.urlopen(" in line:
+                        offenders.append("{0}/{1}:{2}".format(
+                            folder or ".", name, lineno))
+    check("no module calls urllib.request.urlopen directly",
+          not offenders, ", ".join(offenders))
+
+
 def check_js_modules():
     """static/js/ is seven plain script files sharing one `SV` object, with
     no bundler to notice a tile calling something it never imported. That
@@ -1468,6 +1492,9 @@ def main():
     check_download()
     print()
     check_js_modules()
+    print()
+
+    check_https_goes_through_netutil()
     print()
 
     check_stats_privacy()

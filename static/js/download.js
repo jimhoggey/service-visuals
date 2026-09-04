@@ -58,7 +58,9 @@
     $("download-export").disabled = exportBusy["download"] || (!!err);
     var hint = $("download-url-hint");
     var d = readDownload();
-    var urlErr = isValidDownloadUrl(d.url) ? null : URL_ERROR;
+    // An empty field is not a mistake yet — show the red message only
+    // once something wrong has actually been typed (submit still refuses).
+    var urlErr = d.url && !isValidDownloadUrl(d.url) ? URL_ERROR : null;
     hint.textContent = urlErr ||
       "Paste a YouTube link. A playlist link downloads only that one video.";
     hint.classList.toggle("is-bad", !!urlErr);

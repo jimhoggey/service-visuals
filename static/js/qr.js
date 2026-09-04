@@ -65,7 +65,13 @@
   // Fetch a REAL still of the card from the server so the preview shows the
   // exact scannable code (and any background image / position). Debounced.
   function fetchQrPreview() {
-    if (validateQr()) return;            // don't preview an invalid config
+    if (validateQr()) {
+      // Nothing to preview yet: a blank pane, not a broken-image icon with
+      // "Live QR card preview" alt text (which is what an <img> with no
+      // src shows). visibility, not hidden — the img's display rule wins.
+      $("qr-preview-img").style.visibility = "hidden";
+      return;
+    }
     var seq = ++qrPreviewSeq;
     $("qr-preview-loading").hidden = false;
     fetch("/api/qr-preview", {
@@ -78,6 +84,7 @@
         if (seq !== qrPreviewSeq) return; // a newer request superseded this one
         var url = URL.createObjectURL(blob);
         $("qr-preview-img").src = url;
+        $("qr-preview-img").style.visibility = "";
         if (qrPreviewUrl) URL.revokeObjectURL(qrPreviewUrl);
         qrPreviewUrl = url;
         $("qr-preview-loading").hidden = true;

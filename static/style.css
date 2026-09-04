@@ -363,7 +363,17 @@ button.tile:active { transform: translateY(0); }
 
 /* Download has no preview canvas, so its form skips .config-grid's second
    column — just cap the width to match the other tiles' form column. */
-.form-solo { max-width: 410px; }
+/* A form with no preview beside it (the download tile) gets the room a
+   pasted URL needs, instead of the 410px config column. */
+.form-solo { max-width: 640px; }
+
+/* The one field on the download tile IS the tile: bigger than the rest. */
+.url-input {
+  border-radius: 10px;
+  font-size: 17px;
+  line-height: 1.4;
+  padding: 16px 18px;
+}
 
 .fields {
   border: 0;
@@ -425,7 +435,30 @@ textarea {
 
 select { display: block; width: 100%; font-size: 14px; }
 
+/* A text field that is the whole point of its group (a link, a heading)
+   fills the group and looks like every other control — the browser's
+   20-character default box was easy to miss on the QR and download tiles.
+   Scoped to direct children of a group so the scoreboard's in-place
+   editor and the AI panel's row inputs keep their own rules. */
+.group > input[type="text"],
+.group > input[type="url"] {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--well);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 16px;
+  padding: 10px 12px;
+}
+.group > input[type="text"]::placeholder,
+.group > input[type="url"]::placeholder { color: var(--ink-faint); }
+
 input[type="number"]:focus,
+.group > input[type="text"]:focus,
+.group > input[type="url"]:focus,
 select:focus,
 textarea:focus {
   border-color: var(--accent);

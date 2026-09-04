@@ -24,6 +24,8 @@ import urllib.error
 import urllib.request
 import zipfile
 
+import netutil
+
 # Same convention as backgrounds.py / stats.py: honour SERVICE_VISUALS_CONFIG
 # so a smoke/dev run never touches the real ~/.service-visuals.
 _CONFIG_DIR = os.environ.get("SERVICE_VISUALS_CONFIG") or \
@@ -136,7 +138,11 @@ def _http_get(url, dest=None, progress_cb=None):
     """
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     try:
-        with urllib.request.urlopen(req, timeout=_NETWORK_TIMEOUT) as resp:
+        # netutil, never urllib directly: the packaged app has no CA bundle
+        # on disk, so a plain urlopen fails TLS verification with URLError
+        # — which is exactly what v1.29.0 shipped as "Couldn't reach
+        # GitHub" on the owner's Mac while working fine from source.
+        with netutil.urlopen(req, timeout=_NETWORK_TIMEOUT) as resp:
             if dest is None:
                 return resp.read()
             total = resp.length
@@ -152,6 +158,9 @@ def _http_get(url, dest=None, progress_cb=None):
                         progress_cb(min(1.0, done / total))
             return dest
     except (urllib.error.URLError, OSError, ValueError) as exc:
+        # The volunteer sees one plain sentence; the real reason (DNS, TLS,
+        # a proxy) goes to download.log so the owner can be handed it.
+        log_line("fetch failed: {0} -> {1!r}".format(url, exc))
         raise ToolsError(
             "Couldn't reach GitHub to set up the downloader — check the "
             "internet connection and try again.") from exc
