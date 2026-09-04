@@ -4,9 +4,12 @@
 Sonnet agent, frontend Sonnet agent (disjoint files, below). The backend
 used segno's `matrix_iter(verbose=True)` module types for the DOTS
 finder/alignment squares (segno 1.6.6). No QR decoder is installed on the
-dev Mac; scannability was checked with Apple Vision's barcode detector via
-the pyobjc bindings the scoreboard already ships (scratch script, not in
-the repo).
+dev Mac, and both Apple Vision (pyobjc) and OpenCV took minutes just to
+import on the loaded machine — in the end the owner scanned the three
+stills with a phone: all three read. They then asked for a no-ring
+variant, so a `ring` bool (default `true`) was added alongside `style`:
+off means the still is exactly the composed base and the video repeats
+it, with a checkbox "Accent ring around the code" in the Style group.
 
 ## Why
 

@@ -33,7 +33,8 @@
       duration: toInt($("qr-duration").value, 15),
       position: $("qr-position").value || "center",
       background: qrBackground,
-      style: styleEl ? styleEl.value : "card"
+      style: styleEl ? styleEl.value : "card",
+      ring: $("qr-ring").checked
     };
   }
 
@@ -60,7 +61,8 @@
         duration_seconds: q.duration,
         position: q.position,
         background: q.background,
-        style: q.style
+        style: q.style,
+        ring: q.ring
       }
     };
   }

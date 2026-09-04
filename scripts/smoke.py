@@ -1478,6 +1478,34 @@ def check_download_retry_and_remove():
           not tools.tools_status()["ready"])
 
 
+def check_qr_ring():
+    """The accent ring can be switched off (v1.30.1). Off must mean the
+    frame IS the composed base — nothing pasted — and the default must
+    stay on so every existing export is untouched (golden covers that)."""
+    from render import qr as qr_mod
+    from validation import ValidationError, validate_qr_options
+    print("QR: ring on/off")
+    base = {"url": "https://example.org", "heading": "GIVE",
+            "caption": "Thanks"}
+    check("ring defaults to on", validate_qr_options(dict(base))["ring"])
+    check("ring=false is accepted",
+          validate_qr_options(dict(base, ring=False))["ring"] is False)
+    try:
+        validate_qr_options(dict(base, ring="no"))
+        check("ring must be a boolean", False, "no error raised")
+    except ValidationError as exc:
+        check("ring must be a boolean",
+              str(exc) == "The ring option must be true or false.",
+              str(exc))
+    on = qr_mod.render_qr_still(dict(base, ring=True), max_width=0)
+    off = qr_mod.render_qr_still(dict(base, ring=False), max_width=0)
+    plain, _geo = qr_mod._compose_base(
+        qr_mod._clean_options(dict(base, ring=False)))
+    check("ring off renders exactly the composed base",
+          off.tobytes() == plain.tobytes())
+    check("ring on differs from ring off", on.tobytes() != off.tobytes())
+
+
 def check_https_goes_through_netutil():
     """Every outbound HTTPS call must use netutil.urlopen. A frozen build has
     no CA bundle on disk, so a plain urllib.request.urlopen verifies against
@@ -1634,6 +1662,9 @@ def main():
     check_green_screen()
     print()
     check_qr_styles()
+    print()
+
+    check_qr_ring()
     print()
     check_boot_marker_is_packaged_only()
     print()

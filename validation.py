@@ -399,6 +399,10 @@ def validate_qr_options(options):
     if not isinstance(style, str) or style not in QR_STYLES:
         raise ValidationError("That QR style is not valid.")
 
+    ring = options.get("ring", True)
+    if not isinstance(ring, bool):
+        raise ValidationError("The ring option must be true or false.")
+
     return {
         "url": url,
         "heading": heading,
@@ -407,6 +411,7 @@ def validate_qr_options(options):
         "duration_seconds": duration,
         "position": position,
         "style": style,
+        "ring": ring,
         "background": _background_field(options),
     }
 

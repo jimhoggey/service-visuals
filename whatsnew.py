@@ -30,12 +30,14 @@ INTRO = "Nice. You're up to date."
 # was written down — left as-is rather than reworded after the fact.
 NOTES = {
     "1.30.0": [
-        "QR card: three styles — CARD, LIGHT (a bright full-screen "
-        "slide) and DOTS (rounded modules). Click through them.",
-        "YouTube download: when YouTube asks the computer to prove it "
-        "isn't a robot, the app now waits and retries by itself.",
-        "YouTube download: a REMOVE button beside the status line "
-        "deletes the downloader's files (about 120 MB) if you don't need it.",
+        "QR card: three styles — CARD, LIGHT (bright, full screen) and "
+        "DOTS (rounded modules).",
+        "QR card: untick \"Accent ring\" for a plain card with nothing "
+        "moving.",
+        "YouTube download: if YouTube asks for a robot check, the app "
+        "waits and retries by itself.",
+        "YouTube download: a REMOVE button deletes the downloader's "
+        "files (about 120 MB) if you don't need it.",
     ],
     "1.29.1": [
         "Fixed: the YouTube downloader's one-time setup failed with "

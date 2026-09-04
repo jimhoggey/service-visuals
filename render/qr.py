@@ -177,10 +177,15 @@ def _clean_options(options):
         duration = DEFAULT_DURATION
     duration = max(MIN_DURATION, min(MAX_DURATION, duration))
 
+    # The breathing accent ring is the one moving element; off means a
+    # plain card and a video of identical frames. Anything but an actual
+    # False keeps it, so a missing key renders exactly as before.
+    ring = options.get("ring", True) is not False
+
     return {
         "url": url, "heading": heading, "caption": caption,
         "accent": str(accent), "position": position, "style": style,
-        "background": background, "duration": duration,
+        "background": background, "duration": duration, "ring": ring,
     }
 
 
@@ -473,9 +478,10 @@ def render_qr_still(options, max_width=900):
     preview shows the exact, scannable QR that will be exported."""
     opts = _clean_options(options)
     base_rgb, geo = _compose_base(opts)
-    tile = _ring_tile(geo["card_size"], RING_STEPS - 1, opts["accent"])
     frame = base_rgb.copy()
-    frame.paste(tile, _ring_pos(geo), tile)
+    if opts["ring"]:
+        tile = _ring_tile(geo["card_size"], RING_STEPS - 1, opts["accent"])
+        frame.paste(tile, _ring_pos(geo), tile)
     if max_width and max_width < WIDTH:
         h = int(HEIGHT * max_width / WIDTH)
         frame = frame.resize((max_width, h), _LANCZOS)
@@ -510,6 +516,11 @@ def render_qr(options, progress_cb):
     # encoding 2x the frames for no visible gain.
     with FrameEncoder(out_path, INPUT_FPS, output_fps=INPUT_FPS) as enc:
         for k in range(total_frames):
+            if not opts["ring"]:
+                # Nothing moves: every frame is the base itself.
+                enc.add_frame(base_rgb)
+                progress_cb(int((k + 1) * 100.0 / total_frames))
+                continue
             step = _ring_step(2.0 * math.pi * k / total_frames)
             tile = tiles.get(step)
             if tile is None:
