@@ -12,6 +12,7 @@
 <script src="/static/js/qr.js" defer></script>
 <script src="/static/js/motionbg.js" defer></script>
 <script src="/static/js/board.js" defer></script>
+<script src="/static/js/download.js" defer></script>
 <script src="/static/js/shell.js" defer></script>
 </head>
 <body>
@@ -112,6 +113,18 @@
         </svg>
         <span class="tile-name">SCOREBOARD <span class="tile-new">NEW</span></span>
         <span class="tile-desc">Update the points on your existing screen. Upload once, then just type the new numbers.</span>
+      </button>
+
+      <button class="tile" id="tile-download" type="button">
+        <svg class="glyph" viewBox="0 0 64 64" aria-hidden="true">
+          <path d="M32 8 v30" stroke="#f2f0eb" stroke-width="5" stroke-linecap="round"/>
+          <path d="M20 26 L32 40 L44 26" fill="none" stroke="#e8b44f" stroke-width="5"
+                stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M10 46 v8 a4 4 0 0 0 4 4 h36 a4 4 0 0 0 4 -4 v-8"
+                fill="none" stroke="#23262b" stroke-width="5" stroke-linecap="round"/>
+        </svg>
+        <span class="tile-name">YOUTUBE DOWNLOAD</span>
+        <span class="tile-desc">Paste a YouTube link and get an MP4 for ProPresenter, or an MP3.</span>
       </button>
 
       <div class="tile tile-disabled" aria-hidden="true">
@@ -918,6 +931,69 @@
         </div>
       </div>
     </div>
+  </section>
+
+  <!-- ============================== DOWNLOAD ============================== -->
+  <section class="view" id="view-download" aria-labelledby="download-title" hidden>
+    <div class="view-bar">
+      <button class="btn btn-back" id="back-download" type="button">&#8592; BACK</button>
+      <h2 class="view-title" id="download-title" tabindex="-1">YouTube download</h2>
+    </div>
+
+    <form class="config-form panel form-solo" id="download-form" novalidate>
+      <fieldset class="fields" id="download-fields">
+
+        <fieldset class="group">
+          <legend>Source</legend>
+          <div class="label-row">
+            <label for="download-url">YOUTUBE LINK</label>
+          </div>
+          <input type="url" id="download-url" spellcheck="false" autocomplete="off"
+            placeholder="https://www.youtube.com/watch?v=&#8230;">
+          <p class="hint" id="download-url-hint">Paste a YouTube link. A playlist link downloads only that one video.</p>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>Format</legend>
+          <div class="seg-group">
+            <label class="seg">
+              <input class="vh" type="radio" name="download-format" id="download-format-mp4" value="mp4" checked>
+              <span>MP4 VIDEO</span>
+            </label>
+            <label class="seg">
+              <input class="vh" type="radio" name="download-format" id="download-format-mp3" value="mp3">
+              <span>MP3 AUDIO</span>
+            </label>
+          </div>
+          <p class="hint">MP4 is H.264 up to 1080p, ready for ProPresenter.</p>
+        </fieldset>
+
+        <p class="hint" id="download-tools">Checking the downloader&#8230;</p>
+
+        <div class="export-row">
+          <button class="btn-export" id="download-export" type="submit">DOWNLOAD</button>
+        </div>
+      </fieldset>
+
+      <div class="progress-panel" id="download-progress" hidden>
+        <div class="progress-head">
+          <p class="progress-status" id="download-status" aria-live="polite">QUEUED</p>
+          <p class="progress-pct" id="download-pct">0%</p>
+        </div>
+        <div class="progress-track" id="download-track" role="progressbar" aria-label="Download progress"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="progress-fill" id="download-bar"></div>
+        </div>
+        <div class="done-panel" id="download-done" hidden>
+          <p class="done-filename" id="download-filename"></p>
+          <div class="btn-row">
+            <button class="btn btn-accent reveal-btn" id="download-reveal" type="button">SHOW FILE</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="error-panel" id="download-error" role="alert" hidden></div>
+    </form>
   </section>
 
   <!-- ============================== SESSION ============================== -->

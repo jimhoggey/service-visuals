@@ -57,9 +57,11 @@ _REGION_HOSTS = {"US": "https://us.aptabase.com", "EU": "https://eu.aptabase.com
 # Every event this app can ever send. Names only; see the module docstring.
 EVENTS = (
     "app_started",      # the app opened
-    # props: tool (timer|spinner|qr|qr_png|motionbg|scoreboard), render_ms
-    # (how long the render took), took (a readable bucket of the same), and
-    # per-tool mode/style/bg — all fixed words of ours, never user content.
+    # props: tool (timer|spinner|qr|qr_png|motionbg|scoreboard|download),
+    # render_ms (how long the render took), took (a readable bucket of the
+    # same), and per-tool mode/style/bg/format — all fixed words of ours,
+    # never user content. download's "format" is mp4|mp3 — never the url,
+    # title or filename (youtube-download.md).
     "export",           # a visual was exported
     "board_created",    # a scoreboard was read   props: numbers (how many OCR found)
     "board_number_added",  # a number OCR missed was added by hand

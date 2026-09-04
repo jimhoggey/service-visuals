@@ -787,6 +787,174 @@ def check_update_picks_newest_version():
           newest_release([{"tag_name": "v9.9.9", "draft": True}]) is None)
 
 
+def check_download():
+    """youtube-download.md: validation, the pure yt-dlp/tools helpers, and
+    the mp3 addition to EXPORT_FILENAME_RE -- all offline. No yt-dlp or
+    Deno binary, and no network access, anywhere in this function.
+    """
+    import hashlib
+    import platform
+    import tempfile
+
+    import tools
+    import validation
+    from downloader import format_args, friendly_error, parse_progress
+
+    print("Download: validate_download_options")
+
+    def expect_ok(label, options, want):
+        clean = validation.validate_download_options(options)
+        check(label, clean == want, "got {0!r}".format(clean))
+
+    def expect_error(label, options, message):
+        try:
+            validation.validate_download_options(options)
+            check(label, False, "no error raised")
+        except validation.ValidationError as exc:
+            check(label, str(exc) == message, "got {0!r}".format(str(exc)))
+
+    url_error = validation.DOWNLOAD_URL_ERROR
+    expect_ok("a watch?v= link is accepted",
+              {"url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ"},
+              {"url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+               "format": "mp4"})
+    expect_ok("a youtu.be/ link is accepted",
+              {"url": "https://youtu.be/aqz-KE-bpKQ", "format": "mp3"},
+              {"url": "https://youtu.be/aqz-KE-bpKQ", "format": "mp3"})
+    expect_ok("a shorts/ link is accepted",
+              {"url": "https://www.youtube.com/shorts/aqz-KE-bpKQ"},
+              {"url": "https://www.youtube.com/shorts/aqz-KE-bpKQ",
+               "format": "mp4"})
+    expect_ok("a music.youtube.com link is accepted",
+              {"url": "https://music.youtube.com/watch?v=aqz-KE-bpKQ"},
+              {"url": "https://music.youtube.com/watch?v=aqz-KE-bpKQ",
+               "format": "mp4"})
+
+    expect_error("a vimeo.com link is rejected",
+                 {"url": "https://vimeo.com/12345"}, url_error)
+    expect_error("a non-URL string is rejected",
+                 {"url": "not a url at all"}, url_error)
+    expect_error("an empty url is rejected", {"url": ""}, url_error)
+    expect_error("a 600-char url is rejected",
+                 {"url": "https://www.youtube.com/watch?v=" + "x" * 600},
+                 url_error)
+
+    expect_error("an unknown format is rejected",
+                 {"url": "https://youtu.be/aqz-KE-bpKQ", "format": "wav"},
+                 "Format must be mp4 or mp3.")
+    clean = validation.validate_download_options(
+        {"url": "https://youtu.be/aqz-KE-bpKQ"})
+    check("format defaults to mp4", clean.get("format") == "mp4",
+          "got {0!r}".format(clean))
+
+    check('VALIDATORS["download"] is validate_download_options',
+          validation.VALIDATORS["download"]
+          is validation.validate_download_options)
+
+    print()
+    print("Download: format_args / parse_progress / friendly_error")
+    mp4_args = format_args("mp4")
+    check('format_args("mp4") sets codec:h264:m4a,res:1080',
+          "-S" in mp4_args and "codec:h264:m4a,res:1080" in mp4_args,
+          "got {0!r}".format(mp4_args))
+    check('format_args("mp4") merges to mp4',
+          "--merge-output-format" in mp4_args and "mp4" in mp4_args,
+          "got {0!r}".format(mp4_args))
+    mp3_args = format_args("mp3")
+    check('format_args("mp3") extracts audio to mp3',
+          "-x" in mp3_args and "--audio-format" in mp3_args
+          and "mp3" in mp3_args, "got {0!r}".format(mp3_args))
+
+    check('parse_progress("SV  42.3%") is 42',
+          parse_progress("SV  42.3%") == 42,
+          "got {0!r}".format(parse_progress("SV  42.3%")))
+    for line in ("[download] Destination: foo.mp4", "", None):
+        check("a non-progress line yields None: {0!r}".format(line),
+              parse_progress(line) is None)
+
+    check("private/sign-in stderr maps to the private-video message",
+          friendly_error("ERROR: Private video. Sign in if you've been "
+                         "granted access to this video")
+          == "That video is private or needs a sign-in, so it can't be "
+             "downloaded.")
+    check("age-restricted stderr maps to the age message",
+          friendly_error("ERROR: This video is age restricted")
+          == "That video is age-restricted, so it can't be downloaded.")
+    check("unavailable stderr maps to the unavailable message",
+          friendly_error("ERROR: Video unavailable")
+          == "That video isn't available.")
+    check("a network-shaped stderr maps to the network message",
+          friendly_error("urlopen error [Errno 8] nodename nor servname "
+                         "provided")
+          == "Couldn't reach YouTube — check the internet connection and "
+             "try again.")
+    check("an unrecognised stderr falls back to the generic message",
+          friendly_error("ERROR: some brand new yt-dlp failure mode")
+          == "The download failed. YouTube may have changed something — "
+             "the downloader updates itself daily, so try again "
+             "tomorrow.")
+
+    print()
+    print("Download: sha256 verification")
+    with tempfile.NamedTemporaryFile(delete=False) as fh:
+        fh.write(b"service visuals")
+        temp_path = fh.name
+    try:
+        digest = hashlib.sha256(b"service visuals").hexdigest()
+        check("verify_sha256 accepts the right digest",
+              tools.verify_sha256(temp_path, digest))
+        check("verify_sha256 rejects a wrong digest",
+              not tools.verify_sha256(temp_path, "0" * 64))
+        check("verify_sha256 is case-insensitive",
+              tools.verify_sha256(temp_path, digest.upper()))
+    finally:
+        os.unlink(temp_path)
+
+    print()
+    print("Download: asset_names() per platform/arch")
+    real_platform = sys.platform
+    real_machine = platform.machine
+    try:
+        sys.platform = "darwin"
+        platform.machine = lambda: "arm64"
+        check("darwin/arm64",
+              tools.asset_names()
+              == ("yt-dlp_macos", "deno-aarch64-apple-darwin.zip"),
+              "got {0!r}".format(tools.asset_names()))
+        platform.machine = lambda: "x86_64"
+        check("darwin/x86_64",
+              tools.asset_names()
+              == ("yt-dlp_macos", "deno-x86_64-apple-darwin.zip"),
+              "got {0!r}".format(tools.asset_names()))
+        sys.platform = "win32"
+        platform.machine = lambda: "ARM64"
+        check("win32/ARM64",
+              tools.asset_names()
+              == ("yt-dlp_arm64.exe", "deno-aarch64-pc-windows-msvc.zip"),
+              "got {0!r}".format(tools.asset_names()))
+        platform.machine = lambda: "AMD64"
+        check("win32/AMD64",
+              tools.asset_names()
+              == ("yt-dlp.exe", "deno-x86_64-pc-windows-msvc.zip"),
+              "got {0!r}".format(tools.asset_names()))
+    finally:
+        sys.platform = real_platform
+        platform.machine = real_machine
+
+    print()
+    print("Download: EXPORT_FILENAME_RE / status route")
+    import app as _app
+    check("EXPORT_FILENAME_RE matches an mp3 export",
+          _app.EXPORT_FILENAME_RE.fullmatch("Talk-abc123.mp3") is not None)
+
+    client = _app.app.test_client()
+    resp = client.get("/api/download/status")
+    body = resp.get_json() or {}
+    check("GET /api/download/status answers ready/ytdlp_version (offline)",
+          resp.status_code == 200 and "ready" in body
+          and "ytdlp_version" in body, "got {0!r}".format(body))
+
+
 def check_stats_privacy():
     """What the anonymous error reports may contain, and what they may not."""
     import stats
@@ -1296,6 +1464,8 @@ def main():
     check_boot_marker_is_packaged_only()
     print()
     check_update_picks_newest_version()
+    print()
+    check_download()
     print()
     check_js_modules()
     print()

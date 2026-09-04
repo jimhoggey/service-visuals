@@ -29,6 +29,12 @@ INTRO = "Nice. You're up to date."
 # run longer (92/94/106 chars) because they shipped before that guideline
 # was written down — left as-is rather than reworded after the fact.
 NOTES = {
+    "1.29.0": [
+        "New tile: YOUTUBE DOWNLOAD. Paste a link, choose MP4 or MP3, and "
+        "it lands in your exports folder.",
+        "The first download sets up the downloader (about 75 MB, one time); "
+        "it then keeps itself up to date.",
+    ],
     "1.28.1": [],          # Windows build fix — nothing a volunteer would notice
     "1.28.0": [
         "Timer and clock: a GREEN SCREEN toggle under Background gives "

@@ -9,6 +9,7 @@ without pulling in a whole Flask app.
 
 import os
 import re
+from urllib.parse import urlsplit
 
 from render.encoder import UPLOADS_DIR
 from render.qr import POSITIONS
@@ -420,11 +421,45 @@ def validate_motion_bg_options(options):
     }
 
 
+# youtube-download.md: the exact link message covers every way a url can
+# be wrong (missing, too long, wrong scheme, not a YouTube host) — a
+# volunteer pasting the wrong thing needs "paste a YouTube link", not a
+# diagnosis of which check tripped.
+DOWNLOAD_URL_ERROR = (
+    "Paste a YouTube link, like https://www.youtube.com/watch?v=…")
+DOWNLOAD_URL_MAX_LEN = 500
+DOWNLOAD_HOSTS = ("youtube.com", "www.youtube.com", "m.youtube.com",
+                  "music.youtube.com", "youtu.be", "www.youtu.be")
+DOWNLOAD_FORMATS = ("mp4", "mp3")
+
+
+def validate_download_options(options):
+    url = options.get("url", "")
+    if not isinstance(url, str):
+        raise ValidationError(DOWNLOAD_URL_ERROR)
+    url = url.strip()
+    if not url or len(url) > DOWNLOAD_URL_MAX_LEN:
+        raise ValidationError(DOWNLOAD_URL_ERROR)
+
+    parsed = urlsplit(url)
+    # .hostname is already lower-cased and has the port stripped.
+    host = parsed.hostname or ""
+    if parsed.scheme not in ("http", "https") or host not in DOWNLOAD_HOSTS:
+        raise ValidationError(DOWNLOAD_URL_ERROR)
+
+    fmt = options.get("format", "mp4")
+    if fmt not in DOWNLOAD_FORMATS:
+        raise ValidationError("Format must be mp4 or mp3.")
+
+    return {"url": url, "format": fmt}
+
+
 VALIDATORS = {
     "timer": validate_timer_options,
     "spinner": validate_spinner_options,
     "qr": validate_qr_options,
     "motionbg": validate_motion_bg_options,
+    "download": validate_download_options,
 }
 
 

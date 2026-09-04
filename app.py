@@ -24,14 +24,15 @@ from PIL import Image
 import stats
 import updater
 import whatsnew
+from downloader import download_video
 from jobs import JobManager
 from render.encoder import EXPORTS_DIR, UPLOADS_DIR
 from render.timer import render_timer
 from render.spinner import render_spinner
 from render.qr import render_qr, render_qr_image, render_qr_still
 from render.motionbg import render_motion_bg
-from validation import (MOTIONBG_STYLES, SPINNER_MODES, TIMER_STYLES,
-                        VALIDATORS, ValidationError, _one_of,
+from validation import (DOWNLOAD_FORMATS, MOTIONBG_STYLES, SPINNER_MODES,
+                        TIMER_STYLES, VALIDATORS, ValidationError, _one_of,
                         validate_qr_options)
 from webutil import MAX_UPLOAD_BYTES, json_body
 
@@ -61,11 +62,13 @@ def _reject_foreign_hosts():
 from routes.ai import bp as _ai_bp  # noqa: E402
 from routes.backgrounds import bp as _backgrounds_bp  # noqa: E402
 from routes.board import bp as _board_bp  # noqa: E402
+from routes.download import bp as _download_bp  # noqa: E402
 from routes.update import bp as _update_bp  # noqa: E402
 
 app.register_blueprint(_ai_bp)
 app.register_blueprint(_backgrounds_bp)
 app.register_blueprint(_board_bp)
+app.register_blueprint(_download_bp)
 app.register_blueprint(_update_bp)
 
 
@@ -129,12 +132,19 @@ def _motionbg_props(options):
                              MOTIONBG_STYLES, "aurora")}
 
 
+def _download_props(options):
+    return {"format": _one_of(options.get("format"), DOWNLOAD_FORMATS,
+                              "mp4")}
+
+
 jobs = JobManager({"timer": _counted("timer", render_timer, _timer_props),
                    "spinner": _counted("spinner", render_spinner,
                                        _spinner_props),
                    "qr": _counted("qr", render_qr),
                    "motionbg": _counted("motionbg", render_motion_bg,
-                                        _motionbg_props)},
+                                        _motionbg_props),
+                   "download": _counted("download", download_video,
+                                        _download_props)},
                   on_error=lambda tool, exc:
                       stats.report_error("render_failed", exc, tool=tool))
 
@@ -147,7 +157,9 @@ def _report_unhandled(sender, exception, **_extra):
                        route=str(request.endpoint or "unmatched")[:60])
 
 # NB: matched with .fullmatch() — "$" alone would accept a trailing newline.
-EXPORT_FILENAME_RE = re.compile(r"[A-Za-z0-9._-]+\.(mp4|png)")
+# mp3 added for the YouTube-download tile's audio export (youtube-
+# download.md) — the done panel and /api/reveal both need to recognise it.
+EXPORT_FILENAME_RE = re.compile(r"[A-Za-z0-9._-]+\.(mp4|png|mp3)")
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +221,7 @@ def api_render():
     if not isinstance(visual_type, str) or visual_type not in VALIDATORS:
         return jsonify({"error": (
             'Unknown visual type — expected "timer", "spinner", "qr", '
-            'or "motionbg".')}), 400
+            '"motionbg", or "download".')}), 400
 
     options = data.get("options", {})
     if not isinstance(options, dict):

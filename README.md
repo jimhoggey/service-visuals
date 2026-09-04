@@ -84,6 +84,12 @@ events lives in [`stats.py`](stats.py).
      to drop into ProPresenter.
    - **Motion background**: a seamlessly-looping ambient background in your
      accent colour — Aurora, Bokeh or Waves — for worship and ambient moments.
+   - **YouTube download**: paste a YouTube link and get an MP4 (H.264, up to
+     1080p, ready for ProPresenter) or an MP3. The first download fetches and
+     verifies the downloader tools (about 75 MB, one time); after that it
+     keeps itself current automatically. Downloading a video is not a
+     licence to show it — that call, and any rights/licensing needed for
+     public use, is the church's responsibility.
    - **Scoreboard**: upload your existing points screen once. The app reads the
      numbers with your operating system's own text recognition and saves it as a
      reusable board. Each week: open it, click a number, type the new score,

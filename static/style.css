@@ -361,6 +361,10 @@ button.tile:active { transform: translateY(0); }
 
 .config-form { padding: 22px; }
 
+/* Download has no preview canvas, so its form skips .config-grid's second
+   column — just cap the width to match the other tiles' form column. */
+.form-solo { max-width: 410px; }
+
 .fields {
   border: 0;
   margin: 0;

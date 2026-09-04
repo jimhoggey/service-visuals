@@ -47,9 +47,6 @@ JS_KEYWORDS = set("""
     in of do else try throw instanceof with
 """.split())
 
-_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
-_STRING_RE = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"")
 
 
 def _strip_noncode(text):
@@ -63,10 +60,37 @@ def _strip_noncode(text):
     hunt for quote characters without an apostrophe-in-a-comment matching
     as a string open and swallowing real code up to the next apostrophe.
     """
-    text = _BLOCK_COMMENT_RE.sub(" ", text)
-    text = _LINE_COMMENT_RE.sub(" ", text)
-    text = _STRING_RE.sub('""', text)
-    return text
+    # One left-to-right pass rather than three regex passes: a regex that
+    # strips "//" comments first cannot know it is inside a string, so a
+    # URL in a message ("https://…") truncated the line and cascaded into a
+    # false "undefined call" report. Walking the text once, whichever of a
+    # quote or a comment opener comes first wins, which is how the parser
+    # itself sees it.
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        two = text[i:i + 2]
+        if two == "/*":
+            end = text.find("*/", i + 2)
+            end = n if end < 0 else end + 2
+            out.append(" ")
+            i = end
+        elif two == "//":
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+            out.append(" ")
+            i = end
+        elif ch in "\"'`":
+            j = i + 1
+            while j < n and text[j] != ch:
+                j += 2 if text[j] == "\\" else 1
+            out.append('""')
+            i = j + 1
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
 
 
 # A bare call: identifier immediately followed by "(", not preceded by

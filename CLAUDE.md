@@ -76,6 +76,11 @@ PORT=8799 SERVICE_VISUALS_STATS=0 .venv/bin/python app.py   # dev server
   what is unverified, and prefer designs that fail visibly over silently.
 - macOS self-update only works from `/Applications` (App Translocation runs a
   quarantined app from a read-only copy).
+- **The YouTube downloader bundles nothing.** `tools.py` fetches yt-dlp and
+  Deno (YouTube needs a JS runtime since 2025) into `~/.service-visuals/bin`
+  at first use and yt-dlp self-updates daily. Never spawn `yt-dlp` on a UI
+  path (its onefile unpack takes seconds); `--ffmpeg-location` must be the
+  exact imageio ffmpeg file. Spec: `docs/specs/youtube-download.md`.
 
 ## Releasing
 

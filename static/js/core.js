@@ -100,11 +100,12 @@
 
   // ----------------------------------------------------------------- views
 
-  var VIEWS = ["view-home", "view-timer", "view-spinner", "view-qr", "view-motionbg", "view-board"];
+  var VIEWS = ["view-home", "view-timer", "view-spinner", "view-qr", "view-motionbg", "view-board", "view-download"];
 
   var VIEW_KIND = {
     "view-timer": "timer", "view-spinner": "spinner",
-    "view-qr": "qr", "view-motionbg": "motionbg", "view-board": "board"
+    "view-qr": "qr", "view-motionbg": "motionbg", "view-board": "board",
+    "view-download": "download"
   };
 
   function showView(id) {
@@ -229,7 +230,10 @@
             setStatus(kind, "QUEUED" + (job.queue_position ? " #" + job.queue_position : ""));
             setProgress(kind, 0);
           } else if (job.status === "rendering") {
-            setStatus(kind, "RENDERING");
+            // A tile may name its own busy phase (the download tile's
+            // one-time 75 MB tool setup looked stuck under "RENDERING").
+            var busy = SV.tiles[kind] && SV.tiles[kind].busyText;
+            setStatus(kind, (busy && busy(job)) || "RENDERING");
             setProgress(kind, job.progress || 0);
           } else if (job.status === "done") {
             clearInterval(pollHandles[kind]);
@@ -266,6 +270,7 @@
     addSessionExport(kind, filename);
     setFormDisabled(kind, false);
     SV.tiles[kind].update();
+    if (SV.tiles[kind].done) SV.tiles[kind].done(filename);
     $(kind + "-reveal").focus();
   }
 
