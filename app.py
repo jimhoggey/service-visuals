@@ -73,16 +73,16 @@ app.register_blueprint(_download_bp)
 app.register_blueprint(_update_bp)
 
 
-# How long a render took, as a bucket as well as a number. The raw figure is
-# what you chart; the bucket is what you can read at a glance in the Aptabase
-# dashboard, which lists a prop's distinct values — thousands of distinct
-# millisecond readings would be unreadable on their own.
-# Narrow where the renders actually land. The first cut (<5s / 5-15s /
-# 15-60s / 1-5m) put most exports in one 45-second-wide bucket, which
-# says nothing about whether a typical render takes 20 s or 55 s. These
-# are ~10 s wide through the busy range and widen out past a minute.
-# The exact figure is in the render_ms prop — Avg(render_ms) on the
-# dashboard — so these buckets are only for seeing the SHAPE at a glance.
+# How long a render took, as a bucket as well as a number. The exact
+# figure is the render_seconds prop — Avg/Median(render_seconds) on the
+# dashboard is the real answer to "how long does this take"; the bucket
+# only shows the SHAPE of the distribution, which an average hides.
+#
+# The first cut (<5s / 5-15s / 15-60s / 1-5m) put most exports in one
+# 45-second-wide bar, which cannot tell a typical 20-second render from a
+# 55-second one. These are ~10 s wide through the busy range and widen
+# out past a minute. Changing a label starts a new series on the
+# dashboard, so old and new data sit side by side until the old ages out.
 TOOK_BUCKETS = ((2000, "<2s"), (5000, "2-5s"), (10000, "5-10s"),
                 (20000, "10-20s"), (30000, "20-30s"), (45000, "30-45s"),
                 (60000, "45-60s"), (120000, "1-2m"), (300000, "2-5m"))
@@ -104,7 +104,12 @@ def track_export(tool, started, **props):
     precision and it keeps the number of distinct values down.
     """
     ms = int(round((time.time() - started) * 1000))
-    stats.track("export", tool=tool, render_ms=int(round(ms, -2)),
+    # Seconds, not milliseconds: the dashboard renders 3300 as "3.3k",
+    # which reads as thousands of something rather than 3.3 seconds. One
+    # decimal keeps the same precision the old rounding had (0.1 s).
+    # NOTE the new name — reusing render_ms with different units would
+    # silently mix 3.3 and 3300 in one series and ruin every average.
+    stats.track("export", tool=tool, render_seconds=round(ms / 1000.0, 1),
                 took=_took_bucket(ms), **props)
 
 

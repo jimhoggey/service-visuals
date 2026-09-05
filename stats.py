@@ -58,8 +58,9 @@ _REGION_HOSTS = {"US": "https://us.aptabase.com", "EU": "https://eu.aptabase.com
 EVENTS = (
     "app_started",      # the app opened
     # props: tool (timer|spinner|qr|qr_png|motionbg|scoreboard|download),
-    # render_ms (how long the render took), took (a readable bucket of the
-    # same), and per-tool mode/style/bg/format — all fixed words of ours,
+    # render_seconds (how long the render took, in seconds, one decimal),
+    # took (a readable bucket of the same), and per-tool
+    # mode/style/bg/format — all fixed words of ours,
     # never user content. download's "format" is mp4|mp3 — never the url,
     # title or filename (youtube-download.md).
     "export",           # a visual was exported
