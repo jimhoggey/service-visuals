@@ -367,6 +367,41 @@ button.tile:active { transform: translateY(0); }
    pasted URL needs, instead of the 410px config column. */
 .form-solo { max-width: 640px; }
 
+/* Advanced drop-down: the settings a volunteer never has to touch, folded
+   away so the form reads as a few short groups. Native <details>, so it
+   needs no JS and the keyboard/screen-reader behaviour comes for free. */
+.advanced { margin: 0 0 4px; }
+.advanced > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.advanced > summary::-webkit-details-marker { display: none; }
+.advanced > summary::before {
+  content: "";
+  width: 0; height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 120ms ease;
+}
+.advanced[open] > summary::before { transform: rotate(90deg); }
+.advanced > summary:hover { color: var(--ink); }
+.advanced > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.advanced .group { margin-top: 0; }
+
 /* Status line + REMOVE side by side on the download tile. */
 .tools-row {
   display: flex;

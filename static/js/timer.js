@@ -372,6 +372,7 @@
       showSeconds: $("timer-clock-show-seconds").checked,
       // Addendum (v1.23.0): one checkbox, one id, used by both modes.
       showMillis: $("timer-show-millis").checked,
+      fixedFormat: $("timer-fixed-format").checked,
       greenScreen: green,
       // Backgrounds (spec: docs/specs/timer-backgrounds.md): valid in both
       // modes. `backgrounds` comes from JS state (timerBg.ids), not a DOM
@@ -443,7 +444,11 @@
   // Same display rule as the renderer: unpadded minutes, H:MM:SS above 1 hour.
   // Mirrors _format_remaining in render/timer.py: zero-padded to the initial
   // total's width so the preview shows exactly what the video will.
-  function formatClock(remaining, total) {
+  function formatClock(remaining, total, fixed) {
+    if (fixed) {
+      return pad2(Math.floor(remaining / 3600)) + ":" +
+        pad2(Math.floor((remaining % 3600) / 60)) + ":" + pad2(remaining % 60);
+    }
     if (total >= 3600) {
       return Math.floor(remaining / 3600) + ":" + pad2(Math.floor((remaining % 3600) / 60)) + ":" + pad2(remaining % 60);
     }
@@ -675,7 +680,7 @@
     if (t.mode === "clock") { drawClockTimerPreview(ctx, t); return; }
 
     var total = Math.max(0, t.minutes * 60 + t.seconds);
-    var text = formatClock(total, total);
+    var text = formatClock(total, total, t.fixedFormat);
     // renderer: accent digits whenever remaining <= 10s (first frame shown here)
     var digitColor = (t.warn && total > 0 && total <= 10) ? t.accent : TEXT_LIGHT;
     // Addendum (v1.23.0): first frame is always the full total, so millis
@@ -882,6 +887,7 @@
         // Addendum (v1.23.0): accepted (and defaults false) in countdown
         // payloads too now — see _validate_countdown_options in app.py.
         show_millis: t.showMillis,
+        fixed_format: t.fixedFormat,
         // Backgrounds (spec: docs/specs/timer-backgrounds.md).
         backgrounds: t.backgrounds,
         bg_seconds: t.bgSeconds,

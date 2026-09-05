@@ -443,7 +443,7 @@ def _render_digits(text, color, met):
     return block
 
 
-def _format_remaining(rem, total):
+def _format_remaining(rem, total, fixed=False):
     """Format `rem` with field widths fixed by the INITIAL total, zero-padded.
 
     A 10-minute timer renders "10:00" then "09:59" (not " 9:59"): the string
@@ -451,7 +451,15 @@ def _format_remaining(rem, total):
     glyphs are always dead-centred. The old space-padding kept the block
     width constant but left the visible text half a slot off-centre for
     almost the whole video — clearly visible inside the ring.
+
+    With `fixed` the shape stops depending on the total at all: always
+    HH:MM:SS, so 30 seconds and 90 minutes are the same string length and
+    therefore the same digit size on screen. Costs size on a short timer
+    ("00:00:30" auto-fits smaller than "0:30"), which is the whole point.
     """
+    if fixed:
+        return "{0:02d}:{1:02d}:{2:02d}".format(
+            rem // 3600, (rem % 3600) // 60, rem % 60)
     if total >= 3600:
         return "{0}:{1:02d}:{2:02d}".format(
             rem // 3600, (rem % 3600) // 60, rem % 60)
@@ -818,7 +826,10 @@ def render_timer(options, progress_cb):
     # one and stays byte-identical to before this feature existed.
     has_bg = bool(options.get("backgrounds"))
 
-    initial_text = _format_remaining(total, total)
+    # Always HH:MM:SS instead of the shortest shape that fits the total.
+    fixed = bool(options.get("fixed_format"))
+
+    initial_text = _format_remaining(total, total, fixed)
     if style == "ring":
         size, digits_cy = 190, RING_CY
     elif style == "bar":
@@ -864,7 +875,7 @@ def render_timer(options, progress_cb):
 
     def base_for(rem, idx):
         color = accent if (warn_last10 and rem <= 10) else DIGITS_COLOR
-        text = _format_remaining(rem, total)
+        text = _format_remaining(rem, total, fixed)
         key = (text, color, idx)
         with bases_lock:
             cached = bases.get(key)
@@ -894,7 +905,7 @@ def render_timer(options, progress_cb):
             rem_ms = max(0, total * 1000 - int(round(i * 1000.0 / fps)))
             color = (accent if (warn_last10 and rem_ms <= 10_000)
                     else DIGITS_COLOR)
-            main_text = _format_remaining(rem_ms // 1000, total)
+            main_text = _format_remaining(rem_ms // 1000, total, fixed)
             # Leading "." makes this the same "small run" shape clock mode
             # passes (main_text[-4:] there always keeps the dot too) — the
             # "." gets its own narrow slot via _digits_metrics/_slot_width,

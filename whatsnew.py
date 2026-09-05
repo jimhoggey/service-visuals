@@ -29,6 +29,12 @@ INTRO = "Nice. You're up to date."
 # run longer (92/94/106 chars) because they shipped before that guideline
 # was written down — left as-is rather than reworded after the fact.
 NOTES = {
+    "1.31.0": [
+        "Timer: tick \"Fixed 00:00:00 format\" and every countdown reads "
+        "00:05:00 or 00:00:30 — same size at any length.",
+        "Timer: the settings you rarely touch now sit under an ADVANCED "
+        "drop-down, so the form is shorter.",
+    ],
     "1.30.0": [
         "QR card: three styles — CARD, LIGHT (bright, full screen) and "
         "DOTS (rounded modules).",

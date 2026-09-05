@@ -551,6 +551,7 @@ def check_clock_validation():
     expected = {"minutes": 1, "seconds": 0, "style": "ring",
                 "accent": "#e8b44f", "warn_last10": False,
                 "hold_seconds": 3, "show_millis": False,
+                "fixed_format": False,
                 "backgrounds": [], "bg_seconds": 10, "bg_dim": 45,
                 "bg_blur": False, "green_screen": False}
     clean = validation.validate_timer_options(countdown)
@@ -1506,6 +1507,50 @@ def check_qr_ring():
     check("ring on differs from ring off", on.tobytes() != off.tobytes())
 
 
+def check_fixed_format():
+    """Countdown "Fixed 00:00:00 format": every duration reads HH:MM:SS, so
+    30 seconds and 90 minutes are the same string length (and therefore the
+    same digit size). Off by default — existing exports must not move."""
+    from render.timer import _format_remaining
+    from validation import ValidationError, validate_timer_options
+    print("Timer: fixed 00:00:00 format")
+    cases = ((300, "00:05:00", "5:00"), (30, "00:00:30", "0:30"),
+             (5400, "01:30:00", "1:30:00"), (900, "00:15:00", "15:00"))
+    for total, fixed_text, plain_text in cases:
+        check("{0}s reads {1} when fixed".format(total, fixed_text),
+              _format_remaining(total, total, True) == fixed_text,
+              _format_remaining(total, total, True))
+        check("{0}s is unchanged when off".format(total),
+              _format_remaining(total, total) == plain_text,
+              _format_remaining(total, total))
+    check("every fixed string is the same width",
+          len({_format_remaining(t, t, True) for t, _f, _p in cases}) == 4
+          and len({len(_format_remaining(t, t, True))
+                   for t, _f, _p in cases}) == 1)
+    check("counting down keeps the shape",
+          [_format_remaining(r, 300, True) for r in (299, 59, 0)]
+          == ["00:04:59", "00:00:59", "00:00:00"])
+
+    base = {"minutes": 5, "seconds": 0}
+    check("fixed_format defaults to off",
+          validate_timer_options(dict(base))["fixed_format"] is False)
+    check("fixed_format true is accepted",
+          validate_timer_options(dict(base, fixed_format=True))
+          ["fixed_format"] is True)
+    try:
+        validate_timer_options(dict(base, fixed_format="yes"))
+        check("fixed_format must be a boolean", False, "no error raised")
+    except ValidationError as exc:
+        check("fixed_format must be a boolean",
+              str(exc) == '"Fixed 00:00:00 format" must be true or false.',
+              str(exc))
+    # Clock mode is countdown-only territory: the key is simply ignored.
+    clock = {"mode": "clock", "start": "19:59:50", "duration_seconds": 30}
+    check("clock mode ignores fixed_format",
+          "fixed_format" not in validate_timer_options(
+              dict(clock, fixed_format=True)))
+
+
 def check_https_goes_through_netutil():
     """Every outbound HTTPS call must use netutil.urlopen. A frozen build has
     no CA bundle on disk, so a plain urllib.request.urlopen verifies against
@@ -1665,6 +1710,9 @@ def main():
     print()
 
     check_qr_ring()
+    print()
+
+    check_fixed_format()
     print()
     check_boot_marker_is_packaged_only()
     print()

@@ -272,17 +272,6 @@
             </div>
           </fieldset>
 
-          <!-- Addendum (v1.23.0): milliseconds apply to BOTH modes now, so
-               this lives outside the clock-only groups above and is never
-               hidden by applyTimerMode(). -->
-          <fieldset class="group" id="timer-millis-group">
-            <legend>Milliseconds</legend>
-            <div class="check-row">
-              <input type="checkbox" id="timer-show-millis">
-              <label for="timer-show-millis">Show milliseconds</label>
-            </div>
-            <p class="hint">Renders at 30 fps &#8212; longer to export</p>
-          </fieldset>
 
           <fieldset class="group">
             <legend>Accent colour</legend>
@@ -359,18 +348,41 @@
             <p class="hint">Softens a busy photo.</p>
           </fieldset>
 
-          <fieldset class="group" id="timer-options-group">
-            <legend>Options</legend>
-            <div class="check-row">
-              <input type="checkbox" id="timer-warn" checked>
-              <label for="timer-warn">Warn colour in final 10 seconds</label>
-            </div>
-            <div class="num-field num-field-wide">
-              <label for="timer-hold">KEEP 0:00 ON SCREEN FOR (SECONDS)</label>
-              <input type="number" id="timer-hold" inputmode="numeric" min="0" max="30" step="1" value="5">
-            </div>
-            <p class="hint" id="timer-hold-hint">After the countdown ends the video stays on 0:00 this long. 0 to 30 seconds.</p>
-          </fieldset>
+          <!-- Everything a volunteer never has to touch. Collapsed by
+               default so the form stays four short groups: the two
+               fieldsets inside keep their ids, so applyTimerMode() still
+               hides the countdown-only one in clock mode. -->
+          <details class="advanced" id="timer-advanced">
+            <summary>Advanced</summary>
+            <!-- Addendum (v1.23.0): milliseconds apply to BOTH modes now, so
+                 this lives outside the clock-only groups above and is never
+                 hidden by applyTimerMode(). -->
+            <fieldset class="group" id="timer-millis-group">
+              <legend>Milliseconds</legend>
+              <div class="check-row">
+                <input type="checkbox" id="timer-show-millis">
+                <label for="timer-show-millis">Show milliseconds</label>
+              </div>
+              <p class="hint">Renders at 30 fps &#8212; longer to export</p>
+              <div class="check-row" id="timer-fixed-row">
+                <input type="checkbox" id="timer-fixed-format">
+                <label for="timer-fixed-format">Fixed 00:00:00 format</label>
+              </div>
+              <p class="hint" id="timer-fixed-hint">Every timer reads 00:05:00, so the numbers look the same at any length.</p>
+            </fieldset>
+            <fieldset class="group" id="timer-options-group">
+              <legend>Options</legend>
+              <div class="check-row">
+                <input type="checkbox" id="timer-warn" checked>
+                <label for="timer-warn">Warn colour in final 10 seconds</label>
+              </div>
+              <div class="num-field num-field-wide">
+                <label for="timer-hold">KEEP 0:00 ON SCREEN FOR (SECONDS)</label>
+                <input type="number" id="timer-hold" inputmode="numeric" min="0" max="30" step="1" value="5">
+              </div>
+              <p class="hint" id="timer-hold-hint">After the countdown ends the video stays on 0:00 this long. 0 to 30 seconds.</p>
+            </fieldset>
+          </details>
 
           <button class="btn-export" id="timer-export" type="submit">EXPORT MP4</button>
         </fieldset>

@@ -129,6 +129,12 @@ def _validate_countdown_options(options):
     # Millis mean 30 unique frames a second with nothing to cache: a 2-hour
     # countdown would be 216,000 frames (~20 minutes to render). Same ceiling
     # the clock mode has; nobody reads milliseconds on a 45-minute timer.
+    # Countdown only: clock mode has its own 12h/24h padding rule.
+    fixed_format = options.get("fixed_format", False)
+    if not isinstance(fixed_format, bool):
+        raise ValidationError(
+            '"Fixed 00:00:00 format" must be true or false.')
+
     if show_millis and total > MILLIS_MAX_SECONDS:
         raise ValidationError(
             "With milliseconds on, the timer can run for at most 30 minutes. "
@@ -142,6 +148,7 @@ def _validate_countdown_options(options):
         "warn_last10": warn_last10,
         "hold_seconds": hold_seconds,
         "show_millis": show_millis,
+        "fixed_format": fixed_format,
     }
     clean.update(_timer_background_options(options))
     return clean

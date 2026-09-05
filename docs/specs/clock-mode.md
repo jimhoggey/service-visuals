@@ -171,3 +171,32 @@ accepted and defaults to false in countdown mode. Existing countdown renders
 Added in verification: with millis on, a countdown is capped at 30 minutes
 (`MILLIS_MAX_SECONDS`), matching the clock's ceiling — 30 fps with nothing
 cacheable makes a 2-hour timer a 20-minute render.
+
+---
+
+# Addendum (shipped v1.31.0): fixed 00:00:00 countdown format
+
+**Why:** "I want it to look the same if I go from minutes to seconds or
+hours." A countdown's shape currently depends on its total (`0:30`,
+`15:00`, `1:30:00`), so switching duration changes the digit size on
+screen. Countdown only — clock mode keeps its own 12h/24h padding rule.
+
+- `fixed_format` (bool, default **false**) in countdown payloads.
+  `_format_remaining(rem, total, fixed)` returns `HH:MM:SS` always when
+  set: 30 s reads `00:00:30`, 5 min `00:05:00`, 90 min `01:30:00`.
+  Rejected non-bool → *"Fixed 00:00:00 format" must be true or false.*
+- With milliseconds on the millis run is appended as today
+  (`00:05:00.000`); nothing else about the millis path changes.
+- The longer string auto-fits smaller, which is the point: verified in
+  the preview, a 5-minute and a 30-second timer are both 781 px wide
+  where the old `5:00` was 386 px.
+- Off is byte-identical: `golden.py --check` passes unchanged.
+
+## Also in this release: the ADVANCED drop-down
+
+The Timer form grew past what a volunteer should have to read. The
+Milliseconds and Options fieldsets now sit inside a collapsed native
+`<details class="advanced" id="timer-advanced">` (Milliseconds, Fixed
+format, Warn colour, Keep 0:00 on screen). Both fieldsets keep their ids,
+so `applyTimerMode()` still hides the countdown-only one in clock mode.
+Duration, Style, Accent colour and Background stay in the open.
