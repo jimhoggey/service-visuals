@@ -1124,11 +1124,25 @@ def check_stats_privacy():
     print("Stats: export props and duration")
     import app as _app
     check("took buckets straddle their boundaries",
-          [_app._took_bucket(m) for m in (0, 4999, 5000, 14999, 15000,
-                                          59999, 60000, 299999, 300000)]
-          == ["<5s", "<5s", "5-15s", "5-15s", "15-60s",
-              "15-60s", "1-5m", "1-5m", ">5m"],
+          [_app._took_bucket(m) for m in
+           (0, 1999, 2000, 4999, 5000, 9999, 10000, 19999, 20000, 29999,
+            30000, 44999, 45000, 59999, 60000, 119999, 120000, 299999,
+            300000)]
+          == ["<2s", "<2s", "2-5s", "2-5s", "5-10s", "5-10s", "10-20s",
+              "10-20s", "20-30s", "20-30s", "30-45s", "30-45s", "45-60s",
+              "45-60s", "1-2m", "1-2m", "2-5m", "2-5m", ">5m"],
           "bucket boundaries moved")
+    # Every bucket has to be reachable, and the labels have to be unique —
+    # a typo'd limit would silently make one unreachable and quietly bias
+    # the picture the owner reads on the dashboard.
+    labels = [label for _limit, label in _app.TOOK_BUCKETS] + [">5m"]
+    check("bucket labels are unique", len(labels) == len(set(labels)))
+    limits = [limit for limit, _label in _app.TOOK_BUCKETS]
+    check("bucket limits ascend", limits == sorted(set(limits)))
+    reached = {_app._took_bucket(m) for m in
+               [0] + [lim - 1 for lim in limits] + [limits[-1] + 1]}
+    check("every bucket is reachable", reached == set(labels),
+          "unreachable: {0!r}".format(set(labels) - reached))
     # The props are read off the options dict; an unvalidated value must
     # never become an analytics prop.
     nasty = {"mode": "Pink sparkly ponies", "style": "/Users/someone/x.png",

@@ -77,8 +77,15 @@ app.register_blueprint(_update_bp)
 # what you chart; the bucket is what you can read at a glance in the Aptabase
 # dashboard, which lists a prop's distinct values — thousands of distinct
 # millisecond readings would be unreadable on their own.
-TOOK_BUCKETS = ((5000, "<5s"), (15000, "5-15s"), (60000, "15-60s"),
-                (300000, "1-5m"))
+# Narrow where the renders actually land. The first cut (<5s / 5-15s /
+# 15-60s / 1-5m) put most exports in one 45-second-wide bucket, which
+# says nothing about whether a typical render takes 20 s or 55 s. These
+# are ~10 s wide through the busy range and widen out past a minute.
+# The exact figure is in the render_ms prop — Avg(render_ms) on the
+# dashboard — so these buckets are only for seeing the SHAPE at a glance.
+TOOK_BUCKETS = ((2000, "<2s"), (5000, "2-5s"), (10000, "5-10s"),
+                (20000, "10-20s"), (30000, "20-30s"), (45000, "30-45s"),
+                (60000, "45-60s"), (120000, "1-2m"), (300000, "2-5m"))
 
 
 def _took_bucket(ms):
