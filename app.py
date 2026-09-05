@@ -24,7 +24,8 @@ from PIL import Image
 import stats
 import updater
 import whatsnew
-from downloader import download_video
+import tools
+from downloader import ERROR_REASONS, download_video
 from jobs import JobManager
 from render.encoder import EXPORTS_DIR, UPLOADS_DIR
 from render.timer import render_timer
@@ -136,9 +137,35 @@ def _qr_props(options):
     return {"style": _one_of(options.get("style"), QR_STYLES, "card")}
 
 
+def _ytdlp_version_prop():
+    """Which yt-dlp release did this, e.g. "2026.08.19".
+
+    A public release date, not user content — and the one number that
+    explains a wave of failures, because the binary self-updates
+    independently of Service Visuals. Read from the cached file; never
+    spawn the binary here (its onefile unpack takes seconds).
+    """
+    return str(tools.tools_status().get("ytdlp_version") or "none")[:20]
+
+
 def _download_props(options):
     return {"format": _one_of(options.get("format"), DOWNLOAD_FORMATS,
-                              "mp4")}
+                              "mp4"),
+            "ytdlp": _ytdlp_version_prop()}
+
+
+def _on_job_error(tool, exc):
+    """A render or download raised. Every tool reports the exception's
+    shape as usual; a download also reports WHY in one of our own words
+    (downloader.ERROR_REASONS) — never yt-dlp's stderr, which names the
+    video. The full text stays in ~/.service-visuals/download.log.
+    """
+    if tool == "download":
+        stats.track("download_failed",
+                    reason=_one_of(getattr(exc, "reason", None),
+                                   ERROR_REASONS, "unknown"),
+                    ytdlp=_ytdlp_version_prop())
+    stats.report_error("render_failed", exc, tool=tool)
 
 
 jobs = JobManager({"timer": _counted("timer", render_timer, _timer_props),
@@ -149,8 +176,7 @@ jobs = JobManager({"timer": _counted("timer", render_timer, _timer_props),
                                         _motionbg_props),
                    "download": _counted("download", download_video,
                                         _download_props)},
-                  on_error=lambda tool, exc:
-                      stats.report_error("render_failed", exc, tool=tool))
+                  on_error=_on_job_error)
 
 
 @got_request_exception.connect_via(app)
@@ -163,7 +189,14 @@ def _report_unhandled(sender, exception, **_extra):
 # NB: matched with .fullmatch() — "$" alone would accept a trailing newline.
 # mp3 added for the YouTube-download tile's audio export (youtube-
 # download.md) — the done panel and /api/reveal both need to recognise it.
-EXPORT_FILENAME_RE = re.compile(r"[A-Za-z0-9._-]+\.(mp4|png|mp3)")
+# A downloaded video is named after its real title now — spaces, accents,
+# brackets, and dots inside the name ("Fred again.. - ...mp4") — so the old
+# [A-Za-z0-9._-] whitelist would refuse to reveal the app's own files. What
+# actually has to hold is that the name cannot escape the exports folder:
+# no path separators, no control characters, and one of our extensions.
+# Every call site still resolves the realpath and checks containment, which
+# is the real boundary; this is the cheap first gate in front of it.
+EXPORT_FILENAME_RE = re.compile(r"[^/\\\x00-\x1f]{1,200}\.(mp4|png|mp3)")
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +404,10 @@ def prepare_exports_dir():
     updater.sweep_backups()
     stats.start(APP_VERSION)
     stats.report_previous_boot()     # also arms the marker for this boot
+    # Keep the YouTube downloader current without waiting for a Service
+    # Visuals release: a background thread, a no-op unless it has been a
+    # day, and skipped entirely if the tools were never fetched.
+    tools.start_background_update()
     # Sweep leftovers from renders that a killed server never finished.
     for leftover in os.listdir(EXPORTS_DIR):
         if leftover.endswith(".part"):

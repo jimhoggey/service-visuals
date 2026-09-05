@@ -8,6 +8,11 @@
 
   var $ = SV.$;
   var exportBusy = SV.exportBusy;
+  var setStatus = SV.setStatus;
+
+  // The link whose download finished, so the form can tell "you already
+  // did this one" from "you have typed a new one" — see updateDownload().
+  var lastDoneUrl = "";
 
   // =========================================================== DOWNLOAD ====
 
@@ -54,6 +59,15 @@
   }
 
   function updateDownload() {
+    // A new link means the finished panel below is about a different
+    // video: clear it rather than leave a stale filename and SHOW FILE
+    // sitting under a button that is about to do something else.
+    if (lastDoneUrl && readDownload().url !== lastDoneUrl) {
+      lastDoneUrl = "";
+      $("download-export").textContent = "DOWNLOAD";
+      $("download-progress").hidden = true;
+      $("download-done").hidden = true;
+    }
     var err = validateDownload();
     $("download-export").disabled = exportBusy["download"] || (!!err);
     var hint = $("download-url-hint");
@@ -113,8 +127,15 @@
       return "DOWNLOADING…";
     },
     // After the first successful run the status line should say the
-    // downloader is ready, not still promise a one-time setup.
-    done: function () { fetchDownloadStatus(); }
+    // downloader is ready, not still promise a one-time setup. The button
+    // also stops reading as "nothing has happened yet": the file IS
+    // downloaded, and the only thing left to do here is another one.
+    done: function () {
+      fetchDownloadStatus();
+      lastDoneUrl = readDownload().url;
+      setStatus("download", "SAVED");
+      $("download-export").textContent = "DOWNLOAD ANOTHER";
+    }
   };
   // The two fetched binaries are ~120 MB on disk; a church that tried the
   // tile once can hand that back here instead of hunting for the folder.

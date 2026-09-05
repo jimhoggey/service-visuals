@@ -63,6 +63,11 @@ EVENTS = (
     # never user content. download's "format" is mp4|mp3 — never the url,
     # title or filename (youtube-download.md).
     "export",           # a visual was exported
+    # props: reason (one of downloader.ERROR_REASONS — our own words:
+    # setup|bot_check|private|age|unavailable|network|unknown) and ytdlp
+    # (the yt-dlp release date in use). NEVER yt-dlp's stderr, which names
+    # the video; that stays in ~/.service-visuals/download.log.
+    "download_failed",  # a YouTube download did not produce a file
     "board_created",    # a scoreboard was read   props: numbers (how many OCR found)
     "board_number_added",  # a number OCR missed was added by hand
     "ocr_failed",       # scoreboard OCR found nothing usable

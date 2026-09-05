@@ -1612,6 +1612,15 @@ input[type="range"] {
   border-top: 1px solid var(--line);
 }
 
+/* What just happened, in a sentence. The big gold action button sits
+   directly above this panel, so without a line saying the file is
+   already saved the finished state reads as "nothing has happened yet". */
+.done-note {
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+}
 .done-filename {
   margin: 0 0 12px;
   font-family: var(--mono);

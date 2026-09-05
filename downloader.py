@@ -24,7 +24,65 @@ _PROGRESS_RE = re.compile(r"^SV\s+([0-9]+(?:\.[0-9]+)?)%")
 
 
 class DownloadError(Exception):
-    """Carries a plain-English message safe to show the operator."""
+    """Carries a plain-English message safe to show the operator, plus a
+    `reason` from ERROR_REASONS below — one of OUR words, so app.py can
+    report why a download failed without ever forwarding yt-dlp's text."""
+
+    def __init__(self, message, reason="unknown"):
+        Exception.__init__(self, message)
+        self.reason = reason
+
+
+# The only vocabulary that ever leaves the machine about a failed
+# download. yt-dlp's stderr names the video ("[youtube] S9IJ1GgAAxE: Sign
+# in to confirm..."), so the raw text stays local in download.log and
+# analytics get the category alone (stats.py's rule: never user content).
+ERROR_REASONS = ("setup", "bot_check", "private", "age", "unavailable",
+                 "network", "unknown")
+
+_REASON_MESSAGES = {
+    "bot_check": ("YouTube is asking this computer to prove it isn't a "
+                  "robot, so it refused the download. That is temporary — "
+                  "wait a few minutes and try again."),
+    "private": ("That video is private or needs a sign-in, so it can't "
+                "be downloaded."),
+    "age": "That video is age-restricted, so it can't be downloaded.",
+    "unavailable": "That video isn't available.",
+    "network": ("Couldn't reach YouTube — check the internet connection "
+                "and try again."),
+    "unknown": ("The download failed. YouTube may have changed something "
+                "— the downloader updates itself daily, so try again "
+                "tomorrow."),
+}
+
+
+def classify_error(stderr):
+    """Sort yt-dlp's stderr into one ERROR_REASONS word.
+
+    Matched case-insensitively on a handful of substrings rather than an
+    exact string: yt-dlp's own wording shifts release to release faster
+    than a hand-maintained exact match could keep up, and it self-updates
+    daily (tools.update_ytdlp), so an exact match would go stale fast.
+    """
+    text = (stderr or "").lower()
+    if is_bot_check(text):
+        # Checked before "sign in": YouTube's wording is "Sign in to
+        # confirm you're not a bot", and v1.29.1 read that as "private".
+        return "bot_check"
+    # Age before private: YouTube's age wall says "Sign in to confirm
+    # your age", which the "sign in" test below would otherwise swallow.
+    # Matched on the specific phrases, not a bare "age" — that substring
+    # also lives inside "message", "page" and "storage".
+    if ("age-restricted" in text or "age restricted" in text
+            or "confirm your age" in text):
+        return "age"
+    if "private video" in text or "sign in" in text:
+        return "private"
+    if "unavailable" in text or "removed" in text:
+        return "unavailable"
+    if "urlopen error" in text or "timed out" in text or "network" in text:
+        return "network"
+    return "unknown"
 
 
 def format_args(fmt):
@@ -56,9 +114,15 @@ def is_bot_check(stderr):
     """YouTube's intermittent "prove you're not a bot" refusal. Seen on
     the owner's home network twice in three minutes and gone ten minutes
     later with the identical request, so it is worth a pause and a retry
-    before it becomes the operator's problem."""
+    before it becomes the operator's problem.
+
+    Must require the word "bot": v1.30.0 matched a bare "confirm you",
+    which YouTube's age wall ("Sign in to confirm your age") also
+    contains — so an age-restricted video was retried twice for nothing
+    and then shown the wrong sentence.
+    """
     text = (stderr or "").lower()
-    return "not a bot" in text or "confirm you" in text
+    return "not a bot" in text or ("confirm" in text and "bot" in text)
 
 
 # Pauses before each retry of a bot-checked download. Two retries, ~1 min
@@ -68,33 +132,10 @@ BOT_CHECK_DELAYS = (15, 45)
 
 
 def friendly_error(stderr):
-    """Map yt-dlp's stderr onto one of a few plain-English sentences.
-
-    Matched case-insensitively on a handful of substrings rather than an
-    exact string: yt-dlp's own wording shifts release to release faster
-    than a hand-maintained exact match could keep up, and it self-updates
-    daily (tools.update_ytdlp), so an exact match would go stale fast.
-    """
-    text = (stderr or "").lower()
-    if is_bot_check(text):
-        # Checked before "sign in": YouTube's wording is "Sign in to
-        # confirm you're not a bot", and v1.29.1 read that as "private".
-        return ("YouTube is asking this computer to prove it isn't a "
-                "robot, so it refused the download. That is temporary — "
-                "wait a few minutes and try again.")
-    if "private video" in text or "sign in" in text:
-        return ("That video is private or needs a sign-in, so it can't "
-                "be downloaded.")
-    if "age" in text:
-        return "That video is age-restricted, so it can't be downloaded."
-    if "unavailable" in text or "removed" in text:
-        return "That video isn't available."
-    if ("urlopen error" in text or "timed out" in text
-            or "network" in text):
-        return ("Couldn't reach YouTube — check the internet connection "
-                "and try again.")
-    return ("The download failed. YouTube may have changed something — "
-            "the downloader updates itself daily, so try again tomorrow.")
+    """The sentence the operator sees, for the same stderr classify_error
+    sorts. One classifier feeds both, so the message and the reported
+    reason can never drift apart."""
+    return _REASON_MESSAGES[classify_error(stderr)]
 
 
 def _build_args(ytdlp_path, url, fmt, deno_path, ffmpeg_path):
@@ -110,12 +151,20 @@ def _build_args(ytdlp_path, url, fmt, deno_path, ffmpeg_path):
     args = [ytdlp_path, url, "--no-playlist",
             "--js-runtimes", "deno:{0}".format(deno_path),
             "--ffmpeg-location", ffmpeg_path,
-            "--restrict-filenames", "--newline", "--no-warnings",
+            # No --restrict-filenames: it flattens a title to ASCII
+            # underscores ("Fred_again.._-_Delilah_...-Cl6Rz1Uvi2M.mp4"),
+            # which is unreadable in a ProPresenter media bin. yt-dlp still
+            # strips characters the filesystem cannot take.
+            "--newline", "--no-warnings",
             "--socket-timeout", "30", "--retries", "3"]
     args += format_args(fmt)
     args += ["--progress-template", "download:SV %(progress._percent_str)s",
              "--print", "after_move:filepath",
-             "-o", os.path.join(EXPORTS_DIR, "%(title).80s-%(id)s.%(ext)s")]
+             # Title only — the id was there for uniqueness, but it is
+             # noise to a human scanning a media folder. Downloading the
+             # same video twice replaces it, which is what an operator
+             # expects; two different videos sharing a title is rare.
+             "-o", os.path.join(EXPORTS_DIR, "%(title).80s.%(ext)s")]
     return args
 
 
@@ -137,7 +186,10 @@ def download_video(options, progress_cb):
     try:
         tools.ensure_tools(progress_cb=_tools_progress)
     except tools.ToolsError as exc:
-        raise DownloadError(str(exc)) from exc
+        # Fetching yt-dlp/Deno failed, not the download itself — worth
+        # telling apart in analytics (v1.29.1's certificate bug looked
+        # exactly like this and nothing reported it).
+        raise DownloadError(str(exc), "setup") from exc
     tools.update_ytdlp()
 
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
@@ -161,7 +213,8 @@ def download_video(options, progress_cb):
 
     tools.log_line(
         "download failed (exit {0}):\n{1}".format(code, stderr_text))
-    raise DownloadError(friendly_error(stderr_text))
+    raise DownloadError(friendly_error(stderr_text),
+                        classify_error(stderr_text))
 
 
 def _run_once(args, needs_fetch, progress_cb):

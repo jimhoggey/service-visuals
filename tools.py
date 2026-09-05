@@ -19,6 +19,7 @@ import os
 import platform
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -343,6 +344,37 @@ def tools_status():
         except OSError:
             version = None
     return {"ready": ready, "ytdlp_version": version}
+
+
+def start_background_update():
+    """Bring yt-dlp up to date at launch, off the UI thread.
+
+    YouTube changes often enough that a downloader a few days old simply
+    stops working, and Service Visuals itself may not ship a release for
+    weeks — so the fix has to arrive without one. Doing this at launch
+    rather than only in front of a download means the operator never
+    waits for it and never meets a stale binary mid-service. The 24-hour
+    stamp inside update_ytdlp() still applies, so opening the app five
+    times in a day costs one check.
+
+    Does nothing when the binaries were never fetched or were removed:
+    launching the app must never pull 120 MB uninvited. Never raises —
+    a failure here is logged and the next download still works on
+    whatever version is already on disk.
+    """
+    ytdlp_path, _deno = binary_paths()
+    if not os.path.isfile(ytdlp_path):
+        return None
+
+    def run():
+        try:
+            update_ytdlp()
+        except Exception as exc:
+            log_line("background update failed: {0!r}".format(exc))
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
 
 
 def remove_tools():

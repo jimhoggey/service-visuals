@@ -1054,6 +1054,29 @@ def check_download():
     import app as _app
     check("EXPORT_FILENAME_RE matches an mp3 export",
           _app.EXPORT_FILENAME_RE.fullmatch("Talk-abc123.mp3") is not None)
+    # Downloads are named after the real video title now, so the pattern
+    # has to pass a human filename — including one with dots inside it,
+    # which a naive ".." guard would have rejected.
+    for good in ("Fred again.. - Delilah.mp4",
+                 "Café Worship (Live) 2026.mp4",
+                 "A talk, part 2 — notes.mp3",
+                 "timer_5m00s_classic_20260904-101010.mp4"):
+        check("reveals a real title: {0!r}".format(good),
+              _app.EXPORT_FILENAME_RE.fullmatch(good) is not None)
+    for bad in ("../secrets.mp4", "sub/dir.mp4", "back\\slash.mp4",
+                "no-extension", "line\nbreak.mp4", "x" * 260 + ".mp4"):
+        check("refuses {0!r}".format(bad),
+              _app.EXPORT_FILENAME_RE.fullmatch(bad) is None)
+
+    # The clean-filename rule itself: no --restrict-filenames (it flattens
+    # a title to ASCII underscores) and no video id in the template.
+    import downloader
+    args = downloader._build_args("/yt", "https://youtu.be/x", "mp4",
+                                  "/deno", "/ffmpeg")
+    check("no --restrict-filenames", "--restrict-filenames" not in args)
+    template = args[args.index("-o") + 1]
+    check("the filename is the title only, no video id",
+          template.endswith("%(title).80s.%(ext)s"), template)
 
     client = _app.app.test_client()
     resp = client.get("/api/download/status")
@@ -1456,6 +1479,47 @@ def check_download_retry_and_remove():
           "robot" in downloader.friendly_error(bot))
     check("a private video keeps the private message",
           "private" in downloader.friendly_error("ERROR: Private video"))
+
+    # The whole classification table. "Sign in to confirm your age"
+    # contains "confirm you" AND "sign in", so it sat in the blast radius
+    # of both the bot-check and private tests — v1.30.0 called it a bot
+    # check and retried it twice for nothing.
+    table = [
+        ("ERROR: [youtube] x: Sign in to confirm you're not a bot.",
+         "bot_check"),
+        ("ERROR: [youtube] x: Private video. Sign in if you have access",
+         "private"),
+        ("ERROR: [youtube] x: Sign in to confirm your age.", "age"),
+        ("ERROR: [youtube] x: This video is age-restricted", "age"),
+        ("ERROR: [youtube] x: Video unavailable", "unavailable"),
+        ("ERROR: unable to download: <urlopen error timed out>", "network"),
+        ("ERROR: Unable to open page for storage message", "unknown"),
+        ("ERROR: something brand new", "unknown"),
+    ]
+    for text, want in table:
+        got = downloader.classify_error(text)
+        check("classify: {0!r} -> {1}".format(text[16:40], want),
+              got == want, "got {0}".format(got))
+    check("the age wall never triggers bot-check retries",
+          not downloader.is_bot_check("Sign in to confirm your age"))
+    check("every reason has a message",
+          all(r in downloader._REASON_MESSAGES
+              for r in downloader.ERROR_REASONS if r != "setup"))
+    check("a setup failure is its own reason",
+          "setup" in downloader.ERROR_REASONS)
+
+    # Privacy: what a failed download is allowed to report. Nothing here
+    # may carry the link, the title or the filename (stats.py's rule).
+    import app as _app2
+    props = _app2._download_props({"format": "mp3",
+                                   "url": "https://youtu.be/SECRET"})
+    check("download props are format + yt-dlp version only",
+          set(props) == {"format", "ytdlp"}, "got {0!r}".format(props))
+    check("no part of the link survives into props",
+          "SECRET" not in repr(props))
+    import stats as _stats
+    check("download_failed is a declared event",
+          "download_failed" in _stats.EVENTS)
     delays = downloader.BOT_CHECK_DELAYS
     check("retry pauses are short (under 90 s in total)",
           all(d > 0 for d in delays) and sum(delays) <= 90,
@@ -1470,6 +1534,17 @@ def check_download_retry_and_remove():
             fh.write(b"x")
     check("status reads ready with the fake binary present",
           tools.tools_status()["ready"])
+
+    # Launch-time self-update: off the UI thread, and above all it must
+    # never fetch anything on its own — a fresh install that has never
+    # used the tile would otherwise pull 120 MB just by opening the app.
+    # (The stamp above is new, so update_ytdlp() no-ops: stays offline.)
+    thread = tools.start_background_update()
+    check("launch update runs in a thread when the tools are installed",
+          thread is not None)
+    if thread is not None:
+        thread.join(30)
+        check("launch update finishes without blocking", not thread.is_alive())
     result = tools.remove_tools()
     check("remove_tools reports ok", result.get("ok") is True,
           "got {0!r}".format(result))
@@ -1477,6 +1552,8 @@ def check_download_retry_and_remove():
           not any(os.path.exists(p) for p in fakes))
     check("status reads not ready afterwards",
           not tools.tools_status()["ready"])
+    check("launch update does nothing once the tools are removed",
+          tools.start_background_update() is None)
 
 
 def check_qr_ring():
