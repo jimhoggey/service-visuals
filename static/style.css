@@ -411,6 +411,30 @@ button.tile:active { transform: translateY(0); }
 }
 .tools-row .hint { margin: 0; }
 
+/* A real button (it does something, and stays keyboard-reachable) wearing
+   hint clothes. A boxed REMOVE sat next to DOWNLOAD looked like part of
+   the job — it isn't: almost nobody should ever press it, and it must
+   never read as "remove the video". Same size and colour as the hint
+   beside it, so it recedes until someone goes looking. */
+.link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.link-btn:hover { color: var(--ink-dim); }
+.link-btn:disabled { opacity: 0.5; cursor: default; }
+.link-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
 /* The one field on the download tile IS the tile: bigger than the rest. */
 .url-input {
   border-radius: 10px;
