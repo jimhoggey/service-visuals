@@ -1,13 +1,20 @@
-"""The YouTube-download render job (docs/specs/youtube-download.md).
+"""The YouTube-download render job (docs/specs/youtube-download.md,
+docs/specs/batch-download.md).
 
 `download_video` is a JobManager job like every renderer in render/ —
-`fn(options, progress_cb) -> output filename` — just backed by yt-dlp
-(via tools.py) instead of Pillow/ffmpeg frames. Kept at the top level
-(not under render/) since nothing here draws a single pixel.
+`fn(options, progress_cb) -> ...` — just backed by yt-dlp (via tools.py)
+instead of Pillow/ffmpeg frames. Kept at the top level (not under
+render/) since nothing here draws a single pixel. Unlike the others it
+returns a dict, not a bare filename: `options["urls"]` is always a list
+(validation.py's one downstream shape, even for a single pasted link),
+so this always runs it as a batch of BATCH_LANES concurrent lanes and
+reports one result per link — see batch-download.md for the shape.
 """
 
 import collections
+import concurrent.futures
 import os
+import random
 import re
 import subprocess
 import threading
@@ -19,6 +26,16 @@ import tools
 from render.encoder import EXPORTS_DIR
 
 JOB_TIMEOUT = 30 * 60  # kill a stuck download rather than block the queue
+
+# batch-download.md, "owner's decisions": 3 lanes, not 1 or 6. Each lane
+# works through its own slice of the submitted list in order, sleeping a
+# jittered BATCH_GAP before every item except its first -- a fixed
+# interval would itself be a machine signature (the spec's words), and a
+# lane that only ever gets one item (any batch of BATCH_LANES or fewer)
+# never sleeps at all, which is what keeps a single download's timing
+# exactly what it was before batching existed.
+BATCH_LANES = 3
+BATCH_GAP = (8, 20)
 
 _PROGRESS_RE = re.compile(r"^SV\s+([0-9]+(?:\.[0-9]+)?)%")
 
@@ -161,21 +178,123 @@ def _build_args(ytdlp_path, url, fmt, deno_path, ffmpeg_path):
     args += ["--progress-template", "download:SV %(progress._percent_str)s",
              "--print", "after_move:filepath",
              # Title only — the id was there for uniqueness, but it is
-             # noise to a human scanning a media folder. Downloading the
-             # same video twice replaces it, which is what an operator
-             # expects; two different videos sharing a title is rare.
-             "-o", os.path.join(EXPORTS_DIR, "%(title).80s.%(ext)s")]
+             # noise to a human scanning a media folder. Two different
+             # videos sharing a title is rare; --no-overwrites below is
+             # what makes pasting the SAME video in twice a no-op skip
+             # instead of a silent re-download.
+             "-o", os.path.join(EXPORTS_DIR, "%(title).80s.%(ext)s"),
+             # batch-download.md's "skip already downloaded". Confirmed
+             # empirically (running the same link twice): with --print
+             # after_move:filepath in play, yt-dlp's stdout is BYTE
+             # IDENTICAL on a skip vs a fresh save — one filepath line,
+             # exit 0, nothing on stderr either — so there is no text
+             # here to branch on. What --no-overwrites does do is leave
+             # an existing file's mtime untouched (also confirmed live:
+             # identical mtime before and after a repeat run), which is
+             # what _download_one below checks instead.
+             "--no-overwrites"]
     return args
 
 
+def _download_one(url, fmt, ytdlp_path, deno_path, ffmpeg_path):
+    """One link of a batch. Never raises — a bad link must not sink the
+    other 19 (batch-download.md), so every failure mode, anticipated or
+    not, comes back as a {"state": "failed", ...} item rather than an
+    exception. Byte progress isn't reported here at all: the batch bar
+    tracks completed ITEMS, not bytes (see download_video), so `_run_once`
+    gets a progress_cb that throws its percentage away.
+    """
+    item_started = time.time()
+    try:
+        args = _build_args(ytdlp_path, url, fmt, deno_path, ffmpeg_path)
+
+        # A bot-checked attempt is retried after a pause (BOT_CHECK_DELAYS,
+        # unchanged and still per-item); any other failure is final on the
+        # first try. attempt_started is captured AFTER the retry ladder's
+        # own sleeping, right before the attempt that actually succeeds —
+        # what the mtime check below needs is "was this file touched by
+        # the attempt that produced it", not by an earlier, failed one.
+        code, result_path, stderr_text = None, None, ""
+        for delay in (0,) + BOT_CHECK_DELAYS:
+            if delay:
+                tools.log_line(
+                    "bot check — retrying in {0}s".format(delay))
+                time.sleep(delay)
+            attempt_started = time.time()
+            code, result_path, stderr_text = _run_once(
+                args, False, lambda _pct: None)
+            if code == 0 and result_path is not None:
+                break
+            if not is_bot_check(stderr_text):
+                break
+
+        seconds = round(time.time() - item_started, 1)
+
+        if code == 0 and result_path is not None:
+            # Empirically (batch-download.md): with --no-overwrites and
+            # --print after_move:filepath, yt-dlp prints the identical
+            # single filepath line whether this run just saved the file
+            # or skipped an existing one — nothing here to parse. But
+            # --no-overwrites does not touch an existing file, so a
+            # result whose mtime predates this attempt was never written
+            # by it (confirmed live: identical mtime before/after a
+            # repeat run). The 1s slack absorbs filesystem timestamp
+            # rounding, not clock error — a real download takes far
+            # longer than a second either way.
+            try:
+                touched = (os.path.getmtime(result_path)
+                          >= attempt_started - 1.0)
+            except OSError:
+                touched = True  # file vanished under us; assume ours
+            filename = os.path.basename(result_path)
+            state = "saved" if touched else "skipped"
+            return {"link": url, "state": state, "filename": filename,
+                    "message": None, "reason": None, "seconds": seconds}
+
+        tools.log_line(
+            "download failed (exit {0}):\n{1}".format(code, stderr_text))
+        return {"link": url, "state": "failed", "filename": None,
+                "message": friendly_error(stderr_text),
+                "reason": classify_error(stderr_text),
+                "seconds": seconds}
+    except Exception as exc:  # one item's bug must not sink the batch
+        tools.log_line("download item crashed: {0}: {1}".format(
+            exc.__class__.__name__, exc))
+        return {"link": url, "state": "failed", "filename": None,
+                "message": _REASON_MESSAGES["unknown"], "reason": "unknown",
+                "seconds": round(time.time() - item_started, 1)}
+
+
+def _run_lane(assignments, fmt, ytdlp_path, deno_path, ffmpeg_path,
+             on_settled):
+    """One lane's items, strictly in the order they were assigned. The
+    jittered BATCH_GAP sits before every item except the lane's first —
+    a fixed interval would itself be a machine signature; the jitter is
+    the point (batch-download.md)."""
+    for position, (index, url) in enumerate(assignments):
+        if position > 0:
+            time.sleep(random.uniform(*BATCH_GAP))
+        result = _download_one(url, fmt, ytdlp_path, deno_path, ffmpeg_path)
+        on_settled(index, result)
+
+
 def download_video(options, progress_cb):
+    """options["urls"] is always a list (validation.py's one downstream
+    shape) of at least one link. Downloads up to BATCH_LANES at a time
+    and returns {"filename": <last SAVED item's basename, or None>,
+    "items": [...]} in the SUBMITTED order, even though the work itself
+    is concurrent (docs/specs/batch-download.md).
+    """
+    urls = options["urls"]
     fmt = options.get("format", "mp4")
-    url = options["url"]
+    total = len(urls)
 
     ytdlp_path, deno_path = tools.binary_paths()
     # Whether THIS call has to fetch anything decides how the progress
-    # bar is split: 0-30% tools setup + 30-100% download, or straight
-    # 0-100% download when both tools were already there.
+    # bar is split: 0-30% tools setup + 30-100% items, or straight
+    # 0-100% items when both tools were already there. Fetched (and
+    # update-checked) ONCE for the whole batch, never per item — a
+    # 20-link batch must not re-verify two sha256s twenty times.
     needs_fetch = not (os.path.isfile(ytdlp_path)
                        and os.path.isfile(deno_path))
 
@@ -186,35 +305,55 @@ def download_video(options, progress_cb):
     try:
         tools.ensure_tools(progress_cb=_tools_progress)
     except tools.ToolsError as exc:
-        # Fetching yt-dlp/Deno failed, not the download itself — worth
-        # telling apart in analytics (v1.29.1's certificate bug looked
-        # exactly like this and nothing reported it).
+        # Fetching yt-dlp/Deno failed, not any one download — a whole-
+        # batch failure (nothing was even attempted), worth telling
+        # apart in analytics (v1.29.1's certificate bug looked exactly
+        # like this and nothing reported it).
         raise DownloadError(str(exc), "setup") from exc
     tools.update_ytdlp()
 
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-    args = _build_args(ytdlp_path, url, fmt, deno_path, ffmpeg_path)
-
     os.makedirs(EXPORTS_DIR, exist_ok=True)
 
-    # A bot-checked attempt is retried after a pause (BOT_CHECK_DELAYS);
-    # any other failure is final on the first try.
-    for delay in (0,) + BOT_CHECK_DELAYS:
-        if delay:
-            tools.log_line("bot check — retrying in {0}s".format(delay))
-            time.sleep(delay)
-        code, result_path, stderr_text = _run_once(
-            args, needs_fetch, progress_cb)
-        if code == 0 and result_path is not None:
-            progress_cb(100)
-            return os.path.basename(result_path)
-        if not is_bot_check(stderr_text):
-            break
+    results = [None] * total
+    done_count = [0]
+    progress_lock = threading.Lock()
 
-    tools.log_line(
-        "download failed (exit {0}):\n{1}".format(code, stderr_text))
-    raise DownloadError(friendly_error(stderr_text),
-                        classify_error(stderr_text))
+    def _on_settled(index, result):
+        # The bar tracks completed items, not bytes (batch-download.md)
+        # — a per-item byte percentage would have to be reconciled across
+        # up to BATCH_LANES concurrent downloads for no real benefit.
+        results[index] = result
+        with progress_lock:
+            done_count[0] += 1
+            fraction = int(done_count[0] * 100 / total)
+        progress_cb(30 + int(fraction * 0.7) if needs_fetch else fraction)
+
+    # Round-robin, not contiguous blocks: with BATCH_LANES=3 every lane
+    # in a batch of 3-or-fewer gets exactly one item, so none of them
+    # ever hits the "not my first" branch below — this is what makes a
+    # one-item batch (today's single-link path) sleep exactly as much as
+    # it always did: not at all.
+    lanes = [[] for _ in range(BATCH_LANES)]
+    for i, url in enumerate(urls):
+        lanes[i % BATCH_LANES].append((i, url))
+    lanes = [lane for lane in lanes if lane]
+
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=len(lanes)) as pool:
+        futures = [pool.submit(_run_lane, lane, fmt, ytdlp_path, deno_path,
+                               ffmpeg_path, _on_settled)
+                  for lane in lanes]
+        for future in futures:
+            future.result()
+
+    progress_cb(100)
+
+    filename = None
+    for item in results:
+        if item["state"] == "saved":
+            filename = item["filename"]
+    return {"filename": filename, "items": results}
 
 
 def _run_once(args, needs_fetch, progress_cb):

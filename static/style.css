@@ -1629,6 +1629,52 @@ input[type="range"] {
   word-break: break-all;
 }
 
+/* Batch download results (spec: docs/specs/batch-download.md) — a summary
+   line plus one row per submitted link. Absent entirely for a single-link
+   job, which keeps showing .done-note/.done-filename above instead. */
+.download-results { margin: 0 0 14px; }
+
+.results-summary {
+  margin: 0 0 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+.results-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.result-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid #1b1e23;
+}
+.result-row:first-child { border-top: 0; }
+
+.result-icon {
+  flex: none;
+  width: 14px;
+  font-family: var(--mono);
+  text-align: center;
+}
+.result-saved .result-icon { color: var(--green); }
+.result-skipped .result-icon { color: var(--accent); }
+.result-failed .result-icon { color: var(--red-ink); }
+
+.result-text {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+  word-break: break-all;
+}
+
 .btn-row {
   display: flex;
   flex-wrap: wrap;

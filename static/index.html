@@ -982,10 +982,12 @@
         <fieldset class="group">
           <legend>Source</legend>
           <div class="label-row">
-            <label for="download-url">YOUTUBE LINK</label>
+            <label for="download-url" id="download-url-label">YOUTUBE LINK</label>
           </div>
           <input class="url-input" type="url" id="download-url" spellcheck="false" autocomplete="off"
             placeholder="https://www.youtube.com/watch?v=&#8230;">
+          <textarea class="url-input" id="download-urls" rows="6" spellcheck="false" autocomplete="off"
+            placeholder="https://www.youtube.com/watch?v=&#8230;&#10;https://youtu.be/&#8230;" hidden></textarea>
           <p class="hint" id="download-url-hint">Paste a YouTube link. A playlist link downloads only that one video.</p>
         </fieldset>
 
@@ -1002,6 +1004,11 @@
             </label>
           </div>
           <p class="hint">MP4 is H.264 up to 1080p, ready for ProPresenter.</p>
+          <div class="check-row">
+            <input type="checkbox" id="download-batch">
+            <label for="download-batch">Batch &#8212; paste several links</label>
+          </div>
+          <p class="hint">Paste several links, one per line &#8212; they download three at a time.</p>
         </fieldset>
 
         <div class="tools-row">
@@ -1024,10 +1031,15 @@
           <div class="progress-fill" id="download-bar"></div>
         </div>
         <div class="done-panel" id="download-done" hidden>
-          <p class="done-note">Saved to your exports folder. Paste another link above to do the next one.</p>
+          <p class="done-note" id="download-note">Saved to your exports folder. Paste another link above to do the next one.</p>
           <p class="done-filename" id="download-filename"></p>
+          <div class="download-results" id="download-results" hidden>
+            <p class="results-summary" id="download-results-summary"></p>
+            <ul class="results-list" id="download-results-list"></ul>
+          </div>
           <div class="btn-row">
             <button class="btn btn-accent reveal-btn" id="download-reveal" type="button">SHOW FILE</button>
+            <button class="btn" id="download-retry-failed" type="button" hidden>RETRY FAILED</button>
           </div>
         </div>
       </div>

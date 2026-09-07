@@ -240,7 +240,7 @@
             pollHandles[kind] = null;
             setProgress(kind, 100);
             setStatus(kind, "DONE");
-            finishExport(kind, job.filename);
+            finishExport(kind, job.filename, job);
           } else if (job.status === "error") {
             clearInterval(pollHandles[kind]);
             pollHandles[kind] = null;
@@ -263,14 +263,18 @@
   // ProPresenter), so showing it in Finder/Explorer is the primary action —
   // the old Download button just played the video inside the app, which
   // helped nobody.
-  function finishExport(kind, filename) {
+  // `job` carries whatever the renderer returned beyond a filename — the
+  // download tile's per-item batch results, for instance. Every other
+  // tile's done() ignores the extra argument, so this stays a no-op for
+  // them (docs/specs/batch-download.md).
+  function finishExport(kind, filename, job) {
     $(kind + "-filename").textContent = filename;
     $(kind + "-reveal").dataset.filename = filename;
     $(kind + "-done").hidden = false;
     addSessionExport(kind, filename);
     setFormDisabled(kind, false);
     SV.tiles[kind].update();
-    if (SV.tiles[kind].done) SV.tiles[kind].done(filename);
+    if (SV.tiles[kind].done) SV.tiles[kind].done(filename, job);
     $(kind + "-reveal").focus();
   }
 

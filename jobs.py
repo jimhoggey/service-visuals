@@ -19,9 +19,18 @@ class Job:
         self.progress = 0           # 0..100
         self.filename = None
         self.error = None
+        # A dict-returning renderer's keys other than "filename" (e.g.
+        # download_video's "items" -- batch-download.md). Empty for every
+        # renderer that returns a plain filename string, which is every
+        # renderer but that one today.
+        self.extra = {}
 
     def to_dict(self, queue_position=0):
-        return {
+        result = dict(self.extra)
+        # The real fields always win over `extra`: a renderer's dict is
+        # arbitrary data from render code, and it must never be able to
+        # shadow the job's own status/progress/etc for a poller.
+        result.update({
             "id": self.id,
             "type": self.type,
             "status": self.status,
@@ -29,7 +38,8 @@ class Job:
             "filename": self.filename,
             "error": self.error,
             "queue_position": queue_position,
-        }
+        })
+        return result
 
 
 # Terminal (done/error) jobs kept around for status polls; older ones are
@@ -39,7 +49,11 @@ KEEP_FINISHED = 50
 
 class JobManager:
     """renderers: {"timer": fn, "spinner": fn} where
-    fn(options, progress_cb) -> output filename (basename in exports/).
+    fn(options, progress_cb) -> output filename (basename in exports/),
+    OR a dict of {"filename": ..., ...extra} for a renderer that has more
+    to report than a filename (batch-download.md) -- extra keys reach a
+    poller through Job.to_dict() untouched, so this module never has to
+    know what any one renderer's extra shape means.
     progress_cb accepts an int 0..100.
     """
 
@@ -96,9 +110,14 @@ class JobManager:
                     _job.progress = max(0, min(100, int(pct)))
 
             try:
-                filename = self._renderers[job.type](job.options, progress_cb)
+                output = self._renderers[job.type](job.options, progress_cb)
                 with self._lock:
-                    job.filename = filename
+                    if isinstance(output, dict):
+                        job.filename = output.get("filename")
+                        job.extra = {k: v for k, v in output.items()
+                                    if k != "filename"}
+                    else:
+                        job.filename = output
                     job.progress = 100
                     job.status = "done"
             except Exception as exc:  # surface anything to the UI

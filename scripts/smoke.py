@@ -924,18 +924,18 @@ def check_download():
     url_error = validation.DOWNLOAD_URL_ERROR
     expect_ok("a watch?v= link is accepted",
               {"url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ"},
-              {"url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+              {"urls": ["https://www.youtube.com/watch?v=aqz-KE-bpKQ"],
                "format": "mp4"})
     expect_ok("a youtu.be/ link is accepted",
               {"url": "https://youtu.be/aqz-KE-bpKQ", "format": "mp3"},
-              {"url": "https://youtu.be/aqz-KE-bpKQ", "format": "mp3"})
+              {"urls": ["https://youtu.be/aqz-KE-bpKQ"], "format": "mp3"})
     expect_ok("a shorts/ link is accepted",
               {"url": "https://www.youtube.com/shorts/aqz-KE-bpKQ"},
-              {"url": "https://www.youtube.com/shorts/aqz-KE-bpKQ",
+              {"urls": ["https://www.youtube.com/shorts/aqz-KE-bpKQ"],
                "format": "mp4"})
     expect_ok("a music.youtube.com link is accepted",
               {"url": "https://music.youtube.com/watch?v=aqz-KE-bpKQ"},
-              {"url": "https://music.youtube.com/watch?v=aqz-KE-bpKQ",
+              {"urls": ["https://music.youtube.com/watch?v=aqz-KE-bpKQ"],
                "format": "mp4"})
 
     expect_error("a vimeo.com link is rejected",
@@ -954,10 +954,65 @@ def check_download():
         {"url": "https://youtu.be/aqz-KE-bpKQ"})
     check("format defaults to mp4", clean.get("format") == "mp4",
           "got {0!r}".format(clean))
+    check("a bare url is normalised into a one-element urls list",
+          clean.get("urls") == ["https://youtu.be/aqz-KE-bpKQ"],
+          "got {0!r}".format(clean))
 
     check('VALIDATORS["download"] is validate_download_options',
           validation.VALIDATORS["download"]
           is validation.validate_download_options)
+
+    print()
+    print("Download: batch-download.md -- the urls (list) shape")
+
+    expect_ok("urls (a list) is accepted and normalised the same way",
+              {"urls": ["https://youtu.be/aqz-KE-bpKQ"], "format": "mp3"},
+              {"urls": ["https://youtu.be/aqz-KE-bpKQ"], "format": "mp3"})
+    expect_ok("blank lines are ignored, entries stripped",
+              {"urls": ["  https://youtu.be/a  ", "", "   ",
+                       "https://youtu.be/b"]},
+              {"urls": ["https://youtu.be/a", "https://youtu.be/b"],
+               "format": "mp4"})
+    expect_ok("a duplicate keeps only its first occurrence",
+              {"urls": ["https://youtu.be/a", "https://youtu.be/b",
+                       "https://youtu.be/a"]},
+              {"urls": ["https://youtu.be/a", "https://youtu.be/b"],
+               "format": "mp4"})
+
+    expect_error("an empty urls list is today's url error",
+                 {"urls": []}, url_error)
+    expect_error("a urls list of only blank lines is today's url error",
+                 {"urls": ["", "   ", "\n"]}, url_error)
+    expect_error("a non-list urls value falls back to the url error",
+                 {"urls": "not-a-list"}, url_error)
+
+    expect_error(
+        "a bad line names its 1-based position",
+        {"urls": ["https://youtu.be/a", "not a url", "https://youtu.be/b"]},
+        validation.BATCH_LINE_ERROR.format(2))
+    expect_error(
+        "line numbers count the CLEANED list, not the raw one",
+        {"urls": ["https://youtu.be/a", "", "https://youtu.be/a",
+                  "not a url"]},
+        validation.BATCH_LINE_ERROR.format(2))
+    expect_error(
+        "a non-string entry is a bad line too, not a crash",
+        {"urls": ["https://youtu.be/a", 42]},
+        validation.BATCH_LINE_ERROR.format(2))
+    check("the batch line message matches the spec text exactly",
+          validation.BATCH_LINE_ERROR.format(4)
+          == "Line 4 isn't a YouTube link — paste one YouTube link per "
+             "line.", validation.BATCH_LINE_ERROR.format(4))
+
+    check("BATCH_MAX_LINKS is 50", validation.BATCH_MAX_LINKS == 50,
+          "got {0!r}".format(validation.BATCH_MAX_LINKS))
+    exactly_50 = ["https://youtu.be/v{0:03d}".format(i) for i in range(50)]
+    clean = validation.validate_download_options({"urls": exactly_50})
+    check("exactly 50 distinct links is accepted",
+          len(clean["urls"]) == 50, "got {0}".format(len(clean["urls"])))
+    expect_error("51 links is rejected",
+                 {"urls": exactly_50 + ["https://youtu.be/v999"]},
+                 "A batch can hold up to 50 links at once.")
 
     print()
     print("Download: format_args / parse_progress / friendly_error")
@@ -1077,6 +1132,8 @@ def check_download():
     template = args[args.index("-o") + 1]
     check("the filename is the title only, no video id",
           template.endswith("%(title).80s.%(ext)s"), template)
+    check("--no-overwrites is set (batch-download.md's skip behaviour)",
+          "--no-overwrites" in args)
 
     client = _app.app.test_client()
     resp = client.get("/api/download/status")
@@ -1526,11 +1583,19 @@ def check_download_retry_and_remove():
     # may carry the link, the title or the filename (stats.py's rule).
     import app as _app2
     props = _app2._download_props({"format": "mp3",
-                                   "url": "https://youtu.be/SECRET"})
-    check("download props are format + yt-dlp version only",
-          set(props) == {"format", "ytdlp"}, "got {0!r}".format(props))
+                                   "urls": ["https://youtu.be/SECRET"]})
+    check("download props are format + yt-dlp version + batch only",
+          set(props) == {"format", "ytdlp", "batch"},
+          "got {0!r}".format(props))
     check("no part of the link survives into props",
           "SECRET" not in repr(props))
+    check("a one-element urls list props as batch=one",
+          props["batch"] == "one", "got {0!r}".format(props))
+    many_props = _app2._download_props(
+        {"format": "mp3",
+         "urls": ["https://youtu.be/a", "https://youtu.be/b"]})
+    check("a multi-element urls list props as batch=many",
+          many_props["batch"] == "many", "got {0!r}".format(many_props))
     import stats as _stats
     check("download_failed is a declared event",
           "download_failed" in _stats.EVENTS)
@@ -1568,6 +1633,298 @@ def check_download_retry_and_remove():
           not tools.tools_status()["ready"])
     check("launch update does nothing once the tools are removed",
           tools.start_background_update() is None)
+
+
+def check_batch_download():
+    """batch-download.md: BATCH_LANES/BATCH_GAP, the concurrent per-item
+    orchestrator (with _run_once fully faked -- no yt-dlp, no network),
+    jobs.py's dict-passthrough, and the per-item analytics wiring. No
+    real sleeping anywhere: time.sleep is patched throughout.
+    """
+    import time as _time
+    import downloader
+    import tools
+
+    print("Download: BATCH_LANES / BATCH_GAP")
+    check("BATCH_LANES is 3", downloader.BATCH_LANES == 3,
+          "got {0!r}".format(downloader.BATCH_LANES))
+    gap = downloader.BATCH_GAP
+    check("BATCH_GAP is a 2-tuple inside 5-30s",
+          isinstance(gap, tuple) and len(gap) == 2
+          and 5 <= gap[0] < gap[1] <= 30, "got {0!r}".format(gap))
+
+    print()
+    print("Download: batch orchestration (fake _run_once, no sleeping)")
+
+    # Same trick check_download_retry_and_remove uses: fake binaries (any
+    # content -- _run_once is faked below too, so they are never actually
+    # executed) plus a fresh stamp/version file, so ensure_tools()/
+    # update_ytdlp() see everything already installed and do no network
+    # work of their own.
+    os.makedirs(tools.BIN_DIR, exist_ok=True)
+    ytdlp_path, deno_path = tools.binary_paths()
+    tool_fakes = [ytdlp_path, deno_path, tools.STAMP_PATH, tools.VERSION_PATH]
+    for path in tool_fakes:
+        with open(path, "wb") as fh:
+            fh.write(b"x")
+
+    real_run_once = downloader._run_once
+    real_sleep = _time.sleep
+    url_saved = "https://youtu.be/SMOKE_SAVED"
+    url_skipped = "https://youtu.be/SMOKE_SKIPPED"
+    url_failed = "https://youtu.be/SMOKE_FAILED"
+    saved_path = os.path.join(EXPORTS_DIR, "_smoke_batch_saved.mp3")
+    skipped_path = os.path.join(EXPORTS_DIR, "_smoke_batch_skipped.mp3")
+    cleanup_paths = [saved_path, skipped_path]
+
+    # Pre-exists with an OLD mtime -- the ONLY signal _download_one has
+    # for "skipped": yt-dlp's stdout is identical either way (see
+    # downloader._build_args), but --no-overwrites never touches an
+    # existing file, so its mtime stays in the past.
+    with open(skipped_path, "w", encoding="utf-8") as fh:
+        fh.write("already here")
+    old = _time.time() - 3600
+    os.utime(skipped_path, (old, old))
+
+    def fake_run_once(args, needs_fetch, progress_cb):
+        url = args[1]
+        if url == url_saved:
+            with open(saved_path, "w", encoding="utf-8") as fh:
+                fh.write("fresh")
+            return 0, saved_path, ""
+        if url == url_skipped:
+            return 0, skipped_path, ""
+        if url == url_failed:
+            return 1, None, "ERROR: Video unavailable"
+        return 1, None, "ERROR: unrecognised url in smoke fixture"
+
+    sleep_calls = []
+    downloader._run_once = fake_run_once
+    _time.sleep = lambda seconds: sleep_calls.append(seconds)
+    try:
+        progress_values = []
+        result = downloader.download_video(
+            {"urls": [url_saved, url_skipped, url_failed], "format": "mp3"},
+            progress_values.append)
+
+        check("a batch returns a dict with filename + items",
+              isinstance(result, dict) and "items" in result
+              and "filename" in result, "got {0!r}".format(result))
+        items = result.get("items") or [None, None, None]
+        check("items come back in submitted order",
+              [i.get("link") for i in items]
+              == [url_saved, url_skipped, url_failed],
+              "got {0!r}".format([i.get("link") for i in items]))
+        check("a freshly-written file is reported saved",
+              items[0].get("state") == "saved"
+              and items[0].get("filename") == os.path.basename(saved_path)
+              and items[0].get("reason") is None,
+              "got {0!r}".format(items[0]))
+        check("a pre-existing (old mtime) file is reported skipped",
+              items[1].get("state") == "skipped"
+              and items[1].get("filename")
+              == os.path.basename(skipped_path),
+              "got {0!r}".format(items[1]))
+        check("a failed item carries the operator sentence + reason",
+              items[2].get("state") == "failed"
+              and items[2].get("reason") == "unavailable"
+              and items[2].get("message") == "That video isn't available.",
+              "got {0!r}".format(items[2]))
+        check("every item carries its own seconds",
+              all(isinstance(i.get("seconds"), float)
+                  and i.get("seconds") >= 0 for i in items),
+              "got {0!r}".format(items))
+        check("the top-level filename is the (only) saved item's",
+              result.get("filename") == os.path.basename(saved_path),
+              "got {0!r}".format(result.get("filename")))
+        check("progress reaches 100",
+              progress_values[-1:] == [100],
+              "got {0!r}".format(progress_values))
+        check("a batch of 3 (one item per lane) never sleeps",
+              sleep_calls == [], "got {0!r}".format(sleep_calls))
+    finally:
+        downloader._run_once = real_run_once
+        _time.sleep = real_sleep
+        for path in cleanup_paths:
+            if os.path.isfile(path):
+                os.unlink(path)
+
+    print()
+    print("Download: a one-item batch never sleeps (today's single link)")
+    sleep_calls_one = []
+    downloader._run_once = fake_run_once
+    _time.sleep = lambda seconds: sleep_calls_one.append(seconds)
+    try:
+        result = downloader.download_video(
+            {"urls": [url_saved], "format": "mp3"}, lambda _pct: None)
+        check("a one-item batch still returns the batch dict shape",
+              result.get("filename") == os.path.basename(saved_path)
+              and len(result.get("items") or []) == 1,
+              "got {0!r}".format(result))
+        check("time.sleep is never called for a one-item batch",
+              sleep_calls_one == [], "got {0!r}".format(sleep_calls_one))
+    finally:
+        downloader._run_once = real_run_once
+        _time.sleep = real_sleep
+        if os.path.isfile(saved_path):
+            os.unlink(saved_path)
+
+    print()
+    print("Download: the jittered gap engages once a lane gets 2 items")
+    urls_four = ["https://youtu.be/SMOKE_Q0", "https://youtu.be/SMOKE_Q1",
+                "https://youtu.be/SMOKE_Q2", "https://youtu.be/SMOKE_Q3"]
+    made_paths = []
+
+    def fake_run_once_many(args, needs_fetch, progress_cb):
+        url = args[1]
+        path = os.path.join(
+            EXPORTS_DIR, "_smoke_batch_{0}.mp3".format(url[-2:]))
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("x")
+        made_paths.append(path)
+        return 0, path, ""
+
+    sleep_calls_many = []
+    downloader._run_once = fake_run_once_many
+    _time.sleep = lambda seconds: sleep_calls_many.append(seconds)
+    try:
+        result = downloader.download_video(
+            {"urls": urls_four, "format": "mp3"}, lambda _pct: None)
+        # Round-robin over 3 lanes: item 0 and item 3 share lane 0 (its
+        # only 2nd item across the whole batch); lanes 1 and 2 get one
+        # item each and so never sleep -- exactly one jittered gap.
+        check("exactly one lane received a 2nd item (one sleep)",
+              len(sleep_calls_many) == 1,
+              "got {0!r}".format(sleep_calls_many))
+        check("the jittered sleep falls inside BATCH_GAP's bounds",
+              bool(sleep_calls_many)
+              and gap[0] <= sleep_calls_many[0] <= gap[1],
+              "got {0!r}".format(sleep_calls_many))
+        check("all 4 items still come back saved",
+              all(i["state"] == "saved" for i in result["items"]),
+              "got {0!r}".format(result["items"]))
+    finally:
+        downloader._run_once = real_run_once
+        _time.sleep = real_sleep
+        for path in made_paths:
+            if os.path.isfile(path):
+                os.unlink(path)
+        tools.remove_tools()
+
+    print()
+    print("Download: jobs.py passes a dict renderer's extras through")
+
+    from jobs import JobManager
+
+    def fake_dict_renderer(_options, progress_cb):
+        progress_cb(50)
+        return {"filename": "final.mp3", "items": [{"link": "x"}],
+                "extra_field": 123}
+
+    def fake_string_renderer(_options, progress_cb):
+        progress_cb(50)
+        return "plain.mp4"
+
+    job_mgr = JobManager({"fakedict": fake_dict_renderer,
+                          "fakestring": fake_string_renderer})
+
+    def _wait_done(job_id, timeout=5):
+        deadline = _time.time() + timeout
+        info = job_mgr.get(job_id)
+        while info["status"] not in ("done", "error"):
+            if _time.time() > deadline:
+                break
+            real_sleep(0.01)
+            info = job_mgr.get(job_id)
+        return info
+
+    dict_info = _wait_done(job_mgr.submit("fakedict", {}))
+    check("a dict-returning renderer: job.filename is the dict's filename",
+          dict_info.get("filename") == "final.mp3",
+          "got {0!r}".format(dict_info))
+    check("a dict-returning renderer: extra keys reach info()",
+          dict_info.get("items") == [{"link": "x"}]
+          and dict_info.get("extra_field") == 123,
+          "got {0!r}".format(dict_info))
+    check("a dict-returning renderer: the core job fields are unchanged",
+          dict_info.get("status") == "done"
+          and dict_info.get("progress") == 100
+          and "id" in dict_info and "queue_position" in dict_info,
+          "got {0!r}".format(dict_info))
+
+    string_info = _wait_done(job_mgr.submit("fakestring", {}))
+    check("a string-returning renderer behaves exactly as today",
+          string_info.get("filename") == "plain.mp4"
+          and set(string_info) == {"id", "type", "status", "progress",
+                                   "filename", "error", "queue_position"},
+          "got {0!r}".format(string_info))
+
+    print()
+    print("Download: per-item analytics (export/download_failed per item)")
+
+    import stats as _stats2
+    import app as _app4
+
+    tracked = []
+    real_track = _stats2.track
+    real_download_video = _app4.download_video
+    fake_items = [
+        {"link": "https://youtu.be/1", "state": "saved",
+         "filename": "one.mp3", "message": None, "reason": None,
+         "seconds": 12.3},
+        {"link": "https://youtu.be/2", "state": "skipped",
+         "filename": "two.mp3", "message": None, "reason": None,
+         "seconds": 1.0},
+        {"link": "https://youtu.be/3", "state": "failed",
+         "filename": None, "message": "That video isn't available.",
+         "reason": "unavailable", "seconds": 4.5},
+    ]
+
+    _stats2.track = lambda name, **props: tracked.append((name, props))
+    _app4.download_video = (
+        lambda options, progress_cb: {"filename": "one.mp3",
+                                      "items": fake_items})
+    try:
+        passthrough = _app4._counted_download(
+            {"urls": ["https://youtu.be/1", "https://youtu.be/2",
+                      "https://youtu.be/3"], "format": "mp3"},
+            lambda _pct: None)
+    finally:
+        _stats2.track = real_track
+        _app4.download_video = real_download_video
+
+    check("_counted_download passes the renderer's dict straight through",
+          passthrough.get("filename") == "one.mp3"
+          and passthrough.get("items") == fake_items,
+          "got {0!r}".format(passthrough))
+
+    exports = [props for name, props in tracked if name == "export"]
+    failed = [props for name, props in tracked if name == "download_failed"]
+    check("exactly one export per saved item, none for skipped/failed",
+          len(exports) == 1, "got {0!r}".format(tracked))
+    check("exactly one download_failed per failed item",
+          len(failed) == 1, "got {0!r}".format(tracked))
+    check("skipped items emit nothing at all",
+          len(tracked) == 2, "got {0!r}".format(tracked))
+    check("the export's render_seconds matches the saved item's own",
+          exports and abs(exports[0].get("render_seconds", -1) - 12.3) < 0.2,
+          "got {0!r}".format(exports))
+    check("the download_failed carries the failed item's own reason",
+          failed and failed[0].get("reason") == "unavailable",
+          "got {0!r}".format(failed))
+    check("both events carry batch (many, for this 3-link batch)",
+          exports and failed and exports[0].get("batch") == "many"
+          and failed[0].get("batch") == "many",
+          "got {0!r}".format((exports, failed)))
+    check("no link, filename or title leaks into either event's props",
+          "youtu.be" not in repr(tracked) and "one.mp3" not in repr(tracked)
+          and "isn't available" not in repr(tracked),
+          "got {0!r}".format(tracked))
+
+    single_props = _app4._download_props({"format": "mp3", "urls": ["x"]})
+    check("a single-link batch props as batch=one",
+          single_props.get("batch") == "one",
+          "got {0!r}".format(single_props))
 
 
 def check_qr_ring():
@@ -1813,6 +2170,9 @@ def main():
     print()
 
     check_download_retry_and_remove()
+    print()
+
+    check_batch_download()
     print()
     check_js_modules()
     print()

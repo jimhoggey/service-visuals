@@ -449,26 +449,83 @@ DOWNLOAD_HOSTS = ("youtube.com", "www.youtube.com", "m.youtube.com",
                   "music.youtube.com", "youtu.be", "www.youtu.be")
 DOWNLOAD_FORMATS = ("mp4", "mp3")
 
+# batch-download.md: an owner's decision, not a guess -- not one link,
+# not unlimited.
+BATCH_MAX_LINKS = 50
+BATCH_LINE_ERROR = (
+    "Line {0} isn't a YouTube link — paste one YouTube link per line.")
 
-def validate_download_options(options):
-    url = options.get("url", "")
+
+def _checked_download_url(url, on_invalid):
+    """The one YouTube-link rulebook (host, scheme, length) a bare `url`
+    and a batch line both answer to -- only the ValidationError they
+    raise on failure differs, so the single-link path keeps its own
+    message untouched while a batch line gets its own line number."""
     if not isinstance(url, str):
-        raise ValidationError(DOWNLOAD_URL_ERROR)
+        raise on_invalid
     url = url.strip()
     if not url or len(url) > DOWNLOAD_URL_MAX_LEN:
-        raise ValidationError(DOWNLOAD_URL_ERROR)
-
+        raise on_invalid
     parsed = urlsplit(url)
     # .hostname is already lower-cased and has the port stripped.
     host = parsed.hostname or ""
     if parsed.scheme not in ("http", "https") or host not in DOWNLOAD_HOSTS:
-        raise ValidationError(DOWNLOAD_URL_ERROR)
+        raise on_invalid
+    return url
+
+
+def _clean_batch_urls(raw):
+    """Blank entries ignored, duplicates dropped (keep first occurrence),
+    whitespace stripped -- done here, not only in the textarea that fed
+    it, so the contract holds for any caller and a 40-line paste with a
+    few repeats doesn't burn through the 50-link cap on repeats alone.
+    A non-string entry (a stray JSON null/number) is left alone rather
+    than guessed at; the per-link check below rejects it the same way a
+    bad `url` string is rejected today.
+    """
+    seen = set()
+    cleaned = []
+    for item in raw:
+        text = item.strip() if isinstance(item, str) else item
+        if text == "":
+            continue
+        if isinstance(text, str):
+            if text in seen:
+                continue
+            seen.add(text)
+        cleaned.append(text)
+    return cleaned
+
+
+def validate_download_options(options):
+    """`options` may carry a single `url` (a string, exactly as the tile
+    has always sent) or a batch `urls` (a list) -- either way this
+    returns one downstream shape, `{"urls": [...], "format": ...}`, so
+    every caller past this point (the job, the analytics wiring) can
+    treat a single link as the one-element batch it now is
+    (docs/specs/batch-download.md).
+    """
+    raw_urls = options.get("urls")
+    if isinstance(raw_urls, list):
+        cleaned = _clean_batch_urls(raw_urls)
+        if not cleaned:
+            raise ValidationError(DOWNLOAD_URL_ERROR)
+        if len(cleaned) > BATCH_MAX_LINKS:
+            raise ValidationError(
+                "A batch can hold up to {0} links at once.".format(
+                    BATCH_MAX_LINKS))
+        urls = [_checked_download_url(
+                    item, ValidationError(BATCH_LINE_ERROR.format(i)))
+                for i, item in enumerate(cleaned, 1)]
+    else:
+        urls = [_checked_download_url(
+            options.get("url", ""), ValidationError(DOWNLOAD_URL_ERROR))]
 
     fmt = options.get("format", "mp4")
     if fmt not in DOWNLOAD_FORMATS:
         raise ValidationError("Format must be mp4 or mp3.")
 
-    return {"url": url, "format": fmt}
+    return {"urls": urls, "format": fmt}
 
 
 VALIDATORS = {

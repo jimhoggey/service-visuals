@@ -160,10 +160,49 @@ def _ytdlp_version_prop():
     return str(tools.tools_status().get("ytdlp_version") or "none")[:20]
 
 
+def _batch_kind(options):
+    """"one" or "many" — never the count, never a link (batch-download.md's
+    analytics rule). Read off options["urls"], which validation.py
+    guarantees is always a list of at least one entry."""
+    return "one" if len(options.get("urls") or []) == 1 else "many"
+
+
 def _download_props(options):
     return {"format": _one_of(options.get("format"), DOWNLOAD_FORMATS,
                               "mp4"),
-            "ytdlp": _ytdlp_version_prop()}
+            "ytdlp": _ytdlp_version_prop(),
+            "batch": _batch_kind(options)}
+
+
+def _counted_download(options, progress_cb):
+    """download_video's own wiring, not _counted: it returns one dict for
+    the whole batch, not one filename, and it must report ANALYTICS per
+    ITEM -- one export per saved link with THAT link's own seconds, one
+    download_failed per failed link -- or a 20-song batch would land as
+    one 3-minute "render" and poison render_seconds (batch-download.md).
+    Skipped items emit nothing: nothing was rendered.
+
+    A whole-batch failure (tools setup) never reaches here at all --
+    download_video raises before returning, and that still goes through
+    the ordinary on_error path below, unchanged.
+    """
+    result = download_video(options, progress_cb)
+    props = _download_props(options)
+    batch = props["batch"]
+    for item in result.get("items", ()):
+        if item["state"] == "saved":
+            # track_export measures wall time itself (time.time() minus
+            # a started timestamp) -- faking `started` from the item's
+            # OWN seconds reuses that one function, and its rounding,
+            # instead of a second copy of the bucket/rounding logic.
+            started = time.time() - item["seconds"]
+            track_export("download", started, **props)
+        elif item["state"] == "failed":
+            stats.track("download_failed",
+                        reason=_one_of(item.get("reason"),
+                                       ERROR_REASONS, "unknown"),
+                        ytdlp=_ytdlp_version_prop(), batch=batch)
+    return result
 
 
 def _on_job_error(tool, exc):
@@ -171,6 +210,11 @@ def _on_job_error(tool, exc):
     shape as usual; a download also reports WHY in one of our own words
     (downloader.ERROR_REASONS) — never yt-dlp's stderr, which names the
     video. The full text stays in ~/.service-visuals/download.log.
+
+    For "download" this now only ever fires for a WHOLE-BATCH failure
+    (tools setup) — a single bad link is a "failed" item inside a
+    successfully-returned batch (_counted_download above), not a raised
+    exception, precisely so one bad link can't sink the other 19.
     """
     if tool == "download":
         stats.track("download_failed",
@@ -186,8 +230,7 @@ jobs = JobManager({"timer": _counted("timer", render_timer, _timer_props),
                    "qr": _counted("qr", render_qr, _qr_props),
                    "motionbg": _counted("motionbg", render_motion_bg,
                                         _motionbg_props),
-                   "download": _counted("download", download_video,
-                                        _download_props)},
+                   "download": _counted_download},
                   on_error=_on_job_error)
 
 

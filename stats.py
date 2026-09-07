@@ -58,16 +58,19 @@ _REGION_HOSTS = {"US": "https://us.aptabase.com", "EU": "https://eu.aptabase.com
 EVENTS = (
     "app_started",      # the app opened
     # props: tool (timer|spinner|qr|qr_png|motionbg|scoreboard|download),
-    # render_seconds (how long the render took, in seconds, one decimal),
-    # took (a readable bucket of the same), and per-tool
-    # mode/style/bg/format — all fixed words of ours,
-    # never user content. download's "format" is mp4|mp3 — never the url,
-    # title or filename (youtube-download.md).
+    # render_seconds (how long it took, in seconds, one decimal), took (a
+    # readable bucket of the same), and per-tool mode/style/bg/format —
+    # all fixed words of ours, never user content. A download adds format
+    # (mp4|mp3), ytdlp (the release date of the binary that did the work)
+    # and batch (one|many — the SHAPE of the batch, never its size), and
+    # sends ONE of these per saved link, so a 20-song batch is 20 ordinary
+    # exports rather than one 3-minute "render" (batch-download.md).
+    # Never the url, title or filename (youtube-download.md).
     "export",           # a visual was exported
     # props: reason (one of downloader.ERROR_REASONS — our own words:
-    # setup|bot_check|private|age|unavailable|network|unknown) and ytdlp
-    # (the yt-dlp release date in use). NEVER yt-dlp's stderr, which names
-    # the video; that stays in ~/.service-visuals/download.log.
+    # setup|bot_check|private|age|unavailable|network|unknown), ytdlp and
+    # batch, as above. One per failed link. NEVER yt-dlp's stderr, which
+    # names the video; that stays in ~/.service-visuals/download.log.
     "download_failed",  # a YouTube download did not produce a file
     "board_created",    # a scoreboard was read   props: numbers (how many OCR found)
     "board_number_added",  # a number OCR missed was added by hand
