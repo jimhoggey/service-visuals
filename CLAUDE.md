@@ -5,7 +5,7 @@ wall clock, spinner wheels, QR cards, motion backgrounds and a scoreboard
 editor as ProPresenter-ready 1080p MP4s / PNGs. Flask on 127.0.0.1 + Pillow +
 bundled ffmpeg, wrapped in pywebview, packaged by PyInstaller.
 
-Owner: Fynn (GitHub `jimhoggey`). Repo: **jimhoggey/service-visuals** (public).
+Owner: Fynn (GitHub `jimhoggey`). Repo: **jimhoggey/ServiceVisuals-App** (public).
 
 ## Working agreements
 

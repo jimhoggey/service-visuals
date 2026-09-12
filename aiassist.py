@@ -215,7 +215,7 @@ def _chat(key, model, messages):
             "Authorization": "Bearer " + key,
             "Content-Type": "application/json",
             "X-Title": "Service Visuals",
-            "HTTP-Referer": "https://github.com/jimhoggey/service-visuals",
+            "HTTP-Referer": "https://github.com/jimhoggey/ServiceVisuals-App",
         })
     try:
         with netutil.urlopen(req, timeout=TIMEOUT) as resp:

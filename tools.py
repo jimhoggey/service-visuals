@@ -46,7 +46,7 @@ DENO_RELEASE = "https://github.com/denoland/deno/releases/download/" \
 
 _NETWORK_TIMEOUT = 30
 _UPDATE_TIMEOUT = 60
-_USER_AGENT = "service-visuals (+https://github.com/jimhoggey/service-visuals)"
+_USER_AGENT = "service-visuals (+https://github.com/jimhoggey/ServiceVisuals-App)"
 _UPDATE_INTERVAL = 24 * 60 * 60  # seconds
 _MAX_LOG_BYTES = 256 * 1024
 

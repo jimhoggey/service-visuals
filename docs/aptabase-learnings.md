@@ -177,4 +177,4 @@ def track(name, **props):
 ships no CA certificates and HTTPS silently fails otherwise.)
 
 Reference implementation with crash reporting, scrubbing and boot marker:
-`stats.py` in https://github.com/jimhoggey/service-visuals.
+`stats.py` in https://github.com/jimhoggey/ServiceVisuals-App.

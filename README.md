@@ -11,7 +11,7 @@ machine.
 ## Install (no terminal needed)
 
 Grab the latest build from the
-[**Releases page**](https://github.com/jimhoggey/service-visuals/releases):
+[**Releases page**](https://github.com/jimhoggey/ServiceVisuals-App/releases):
 
 **Mac** — download `ServiceVisuals-mac.zip`, unzip, then **drag Service Visuals
 into your Applications folder** and open it from there (Launchpad or Spotlight).

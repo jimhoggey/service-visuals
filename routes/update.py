@@ -19,7 +19,7 @@ import stats
 import updater
 from version import APP_VERSION
 
-GITHUB_REPO = "jimhoggey/service-visuals"
+GITHUB_REPO = "jimhoggey/ServiceVisuals-App"
 
 bp = Blueprint("update", __name__)
 
